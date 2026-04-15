@@ -1,0 +1,32 @@
+{
+  "projects": [
+    {
+      "name": "linkmyphotos-ios",
+      "repo": "sixoverground/linkmyphotos-ios",
+      "trigger_id": "trig_011EpkSnwmEPkYyorLxSyks9",
+      "branch_prefix": "swiftui/",
+      "paused": false
+    },
+    {
+      "name": "linkmyphotos-android",
+      "repo": "sixoverground/linkmyphotos-android",
+      "trigger_id": "trig_01EkbKTkVJftPP9uVoGHPZn2",
+      "branch_prefix": "compose/",
+      "paused": false
+    },
+    {
+      "name": "linkmyphotos-rails",
+      "repo": "sixoverground/linkmyphotos-rails",
+      "trigger_id": "trig_01R7HqsraqKearNZz76dmqVC",
+      "branch_prefix": "spa/",
+      "paused": false
+    },
+    {
+      "name": "daykeeper-nextjs",
+      "repo": "sixoverground/daykeeper-nextjs",
+      "trigger_id": "trig_01FJYXSN6CgooRD4i78gFWcR",
+      "branch_prefix": "phase-",
+      "paused": false
+    }
+  ]
+}
