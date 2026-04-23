@@ -399,6 +399,38 @@ cmd_remove() {
   echo "Removed project '$name'"
 }
 
+# --- Subcommand: trigger ---
+cmd_trigger() {
+  local name="${2:-}"
+
+  if [ -z "$name" ]; then
+    echo "Usage: cpm trigger <name>"
+    exit 1
+  fi
+
+  local project
+  project=$(jq -e --arg n "$name" '.projects[] | select(.name == $n)' "$PROJECTS_FILE" 2>/dev/null) || true
+
+  if [ -z "$project" ]; then
+    echo "Error: project '$name' not found"
+    exit 1
+  fi
+
+  local trigger_id
+  trigger_id=$(echo "$project" | jq -r '.trigger_id')
+
+  log "[$name] Manual dispatch: trigger $trigger_id"
+
+  dispatch_output=$(claude -p \
+    --allowed-tools "RemoteTrigger" \
+    --dangerously-skip-permissions \
+    --no-session-persistence \
+    "Run the remote trigger with ID $trigger_id. Use the RemoteTrigger tool with action 'run' and trigger_id '$trigger_id'. Output only the result." \
+    2>&1) || true
+
+  echo "$dispatch_output"
+}
+
 # --- Main ---
 case "${1:-help}" in
   run)    cmd_run ;;
@@ -408,6 +440,7 @@ case "${1:-help}" in
   logs)   cmd_logs ;;
   add)    cmd_add "$@" ;;
   remove) cmd_remove "$@" ;;
+  trigger) cmd_trigger "$@" ;;
   help|--help|-h)
     echo "Usage: cpm <command>"
     echo ""
@@ -419,6 +452,7 @@ case "${1:-help}" in
     echo "  logs     Tail recent orchestrator logs"
     echo "  add      Add a project to the registry"
     echo "  remove   Remove a project from the registry"
+    echo "  trigger  Manually dispatch a project's routine"
     echo ""
     echo "Add usage:"
     echo "  cpm add --name <name> --repo <owner/repo> [--repo <owner/repo>] --trigger <trigger_id> [--prefix <branch_prefix>]"
