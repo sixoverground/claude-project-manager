@@ -379,6 +379,26 @@ cmd_add() {
   echo "$project_json" | jq .
 }
 
+# --- Subcommand: remove ---
+cmd_remove() {
+  local name="${2:-}"
+
+  if [ -z "$name" ]; then
+    echo "Usage: cpm remove <name>"
+    exit 1
+  fi
+
+  if ! jq -e --arg n "$name" '.projects[] | select(.name == $n)' "$PROJECTS_FILE" >/dev/null 2>&1; then
+    echo "Error: project '$name' not found"
+    exit 1
+  fi
+
+  jq --arg n "$name" 'del(.projects[] | select(.name == $n))' "$PROJECTS_FILE" > "$PROJECTS_FILE.tmp" \
+    && mv "$PROJECTS_FILE.tmp" "$PROJECTS_FILE"
+
+  echo "Removed project '$name'"
+}
+
 # --- Main ---
 case "${1:-help}" in
   run)    cmd_run ;;
@@ -387,6 +407,7 @@ case "${1:-help}" in
   stop)   cmd_stop ;;
   logs)   cmd_logs ;;
   add)    cmd_add "$@" ;;
+  remove) cmd_remove "$@" ;;
   help|--help|-h)
     echo "Usage: cpm <command>"
     echo ""
@@ -397,6 +418,7 @@ case "${1:-help}" in
     echo "  status   Show project states and scheduler status"
     echo "  logs     Tail recent orchestrator logs"
     echo "  add      Add a project to the registry"
+    echo "  remove   Remove a project from the registry"
     echo ""
     echo "Add usage:"
     echo "  cpm add --name <name> --repo <owner/repo> [--repo <owner/repo>] --trigger <trigger_id> [--prefix <branch_prefix>]"
