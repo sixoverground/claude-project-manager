@@ -1,0 +1,22 @@
+{
+  "projects": [
+    {
+      "name": "my-fullstack-app",
+      "repos": [
+        { "repo": "yourorg/my-app-web" },
+        { "repo": "yourorg/my-app-ios" }
+      ],
+      "trigger_id": "trig_REPLACE_WITH_YOUR_TRIGGER_ID",
+      "paused": false
+    },
+    {
+      "name": "my-api",
+      "repos": [
+        { "repo": "yourorg/my-api" }
+      ],
+      "trigger_id": "trig_REPLACE_WITH_YOUR_TRIGGER_ID",
+      "branch_prefix": "cpm/",
+      "paused": false
+    }
+  ]
+}

@@ -1,0 +1,334 @@
+#!/bin/zsh
+set -euo pipefail
+
+# --- Config ---
+SCRIPT_PATH="${0:A}"
+PROJECT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+PROJECTS_FILE="$PROJECT_DIR/projects.json"
+PLIST_NAME="com.craigphares.claude-orchestrator"
+PLIST_SRC="$PROJECT_DIR/$PLIST_NAME.plist"
+PLIST_DST="$HOME/Library/LaunchAgents/$PLIST_NAME.plist"
+LOG_DIR="$HOME/Library/Logs/claude-orchestrator"
+LOCK_FILE="/tmp/claude-orchestrator.lock"
+MERGE_WINDOW_HOURS=4
+ACTIVITY_WINDOW_HOURS=2
+DEFAULT_BRANCH_PREFIX="claude/"
+
+# Ensure PATH includes required binaries (critical for launchd)
+export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$HOME/.nvm/versions/node/v24.14.0/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+# --- Helpers ---
+log() {
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+}
+
+log_to_file() {
+  mkdir -p "$LOG_DIR"
+  local logfile="$LOG_DIR/orchestrator-$(date +%Y-%m-%d).log"
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$logfile"
+}
+
+hours_since() {
+  local iso_date="$1"
+  local then_epoch now_epoch
+  # Strip fractional seconds and handle Z suffix
+  local clean_date="${iso_date%%.*}"
+  clean_date="${clean_date%Z}"
+  then_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$clean_date" "+%s" 2>/dev/null || echo "0")
+  now_epoch=$(date "+%s")
+  echo $(( (now_epoch - then_epoch) / 3600 ))
+}
+
+cleanup_logs() {
+  if [ -d "$LOG_DIR" ]; then
+    find "$LOG_DIR" -name "orchestrator-*.log" -mtime +14 -delete 2>/dev/null || true
+    for f in "$LOG_DIR/launchd-stdout.log" "$LOG_DIR/launchd-stderr.log"; do
+      if [ -f "$f" ] && [ $(stat -f%z "$f" 2>/dev/null || echo 0) -gt 1048576 ]; then
+        tail -1000 "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+      fi
+    done
+  fi
+}
+
+# --- Subcommand: run ---
+cmd_run() {
+  # Lock guard
+  if [ -f "$LOCK_FILE" ]; then
+    local lock_pid
+    lock_pid=$(cat "$LOCK_FILE" 2>/dev/null || echo "")
+    if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
+      log "Another instance is running (PID $lock_pid). Exiting."
+      exit 1
+    fi
+    rm -f "$LOCK_FILE"
+  fi
+  echo $$ > "$LOCK_FILE"
+  trap 'rm -f "$LOCK_FILE"' EXIT
+
+  cleanup_logs
+
+  log "Orchestrator run starting"
+  log_to_file "=== Orchestrator run starting ==="
+
+  local projects
+  projects=$(jq -c '.projects[]' "$PROJECTS_FILE")
+
+  # Summary rows
+  local -a summary_rows=()
+
+  while IFS= read -r project; do
+    name=$(echo "$project" | jq -r '.name')
+    trigger_id=$(echo "$project" | jq -r '.trigger_id')
+    project_prefix=$(echo "$project" | jq -r '.branch_prefix // empty')
+    paused=$(echo "$project" | jq -r '.paused')
+
+    # Skip paused projects
+    if [ "$paused" = "true" ]; then
+      log_to_file "[$name] SKIP: paused"
+      summary_rows+=("| $name | paused | SKIP | Project paused |")
+      continue
+    fi
+
+    # Iterate repos for this project
+    local repos=$(echo "$project" | jq -c '.repos[]')
+    local skip_project=false
+    local skip_reason=""
+    local best_merged_at=""
+    local best_merged_pr_num=""
+    local best_merged_branch=""
+    local best_merged_repo=""
+    local best_hours_ago=999999
+
+    while IFS= read -r repo_entry; do
+      repo=$(echo "$repo_entry" | jq -r '.repo')
+      repo_prefix=$(echo "$repo_entry" | jq -r '.branch_prefix // empty')
+      # Resolve branch prefix: per-repo > project-level > default
+      local branch_prefix="${repo_prefix:-${project_prefix:-$DEFAULT_BRANCH_PREFIX}}"
+
+      # Step 1: Check for open phase PR
+      open_prs=$(gh pr list --repo "$repo" --state open --search "head:$branch_prefix" --json number,headRefName 2>/dev/null || echo "[]")
+      open_count=$(echo "$open_prs" | jq 'length')
+
+      if [ "$open_count" -gt 0 ]; then
+        open_pr_num=$(echo "$open_prs" | jq -r '.[0].number')
+        log_to_file "[$name] SKIP: open PR #$open_pr_num in $repo"
+        skip_project=true
+        skip_reason="PR #$open_pr_num in progress ($repo)"
+        break
+      fi
+
+      # Step 2: Check for recently merged phase PR (track best across repos)
+      last_merged=$(gh pr list --repo "$repo" --state merged --search "head:$branch_prefix" --json number,mergedAt,headRefName --jq 'sort_by(.mergedAt) | last' 2>/dev/null || echo "null")
+
+      if [ "$last_merged" != "null" ] && [ -n "$last_merged" ]; then
+        merged_at=$(echo "$last_merged" | jq -r '.mergedAt')
+        merged_pr_num=$(echo "$last_merged" | jq -r '.number')
+        merged_branch=$(echo "$last_merged" | jq -r '.headRefName')
+        hours_ago=$(hours_since "$merged_at")
+
+        if [ "$hours_ago" -lt "$best_hours_ago" ]; then
+          best_merged_at="$merged_at"
+          best_merged_pr_num="$merged_pr_num"
+          best_merged_branch="$merged_branch"
+          best_merged_repo="$repo"
+          best_hours_ago="$hours_ago"
+        fi
+      fi
+
+      # Step 3: Guard against active sessions
+      last_activity=$(gh api "repos/$repo/branches" --jq "[.[] | select(.name | startswith(\"$branch_prefix\"))] | sort_by(.commit.committer.date) | last | .commit.committer.date" 2>/dev/null || echo "")
+
+      if [ -n "$last_activity" ] && [ "$last_activity" != "null" ]; then
+        activity_hours=$(hours_since "$last_activity")
+        if [ "$activity_hours" -lt "$ACTIVITY_WINDOW_HOURS" ]; then
+          log_to_file "[$name] SKIP: recent branch activity ${activity_hours}h ago in $repo"
+          skip_project=true
+          skip_reason="Session likely active ($repo, ${activity_hours}h ago)"
+          break
+        fi
+      fi
+    done <<< "$repos"
+
+    # Handle skip
+    if [ "$skip_project" = "true" ]; then
+      summary_rows+=("| $name | open PR | SKIP | $skip_reason |")
+      continue
+    fi
+
+    # No merged PRs found across any repo
+    if [ -z "$best_merged_at" ]; then
+      log_to_file "[$name] SKIP: no merged PRs found"
+      summary_rows+=("| $name | no merge | SKIP | No merged PRs found |")
+      continue
+    fi
+
+    # Exception: merged > 4h ago + no open PR + no recent branch activity → dispatch anyway
+    if [ "$best_hours_ago" -gt "$MERGE_WINDOW_HOURS" ]; then
+      log_to_file "[$name] DISPATCH (exception): PR #$best_merged_pr_num merged ${best_hours_ago}h ago, no open PR, no recent activity — previous run may have failed"
+    fi
+
+    # Step 4: Dispatch
+    log "[$name] DISPATCH: PR #$best_merged_pr_num ($best_merged_branch) in $best_merged_repo merged ${best_hours_ago}h ago"
+    log_to_file "[$name] DISPATCH: PR #$best_merged_pr_num ($best_merged_branch) in $best_merged_repo merged ${best_hours_ago}h ago"
+
+    dispatch_output=$(claude -p \
+      --allowed-tools "RemoteTrigger" \
+      --dangerously-skip-permissions \
+      --no-session-persistence \
+      "Run the remote trigger with ID $trigger_id. Use the RemoteTrigger tool with action 'run' and trigger_id '$trigger_id'. Output only the result." \
+      2>&1) || true
+
+    log_to_file "[$name] Dispatch output: $dispatch_output"
+    summary_rows+=("| $name | merged ${best_hours_ago}h | DISPATCH | $best_merged_branch merged, starting next |")
+
+  done <<< "$projects"
+
+  # Print summary table
+  echo ""
+  echo "| Project              | Status          | Action   | Reason                          |"
+  echo "|----------------------|-----------------|----------|---------------------------------|"
+  for row in "${summary_rows[@]}"; do
+    echo "$row"
+  done
+  echo ""
+
+  log_to_file "=== Orchestrator run complete ==="
+}
+
+# --- Subcommand: status ---
+cmd_status() {
+  # Check launchd status
+  local launchd_status
+  if launchctl list "$PLIST_NAME" &>/dev/null; then
+    launchd_status="running (every 30m)"
+  else
+    launchd_status="stopped"
+  fi
+  echo "Scheduler: $launchd_status"
+  echo ""
+
+  local projects
+  projects=$(jq -c '.projects[]' "$PROJECTS_FILE")
+
+  echo "| Project              | Status          | Last Merge         |"
+  echo "|----------------------|-----------------|--------------------|"
+
+  while IFS= read -r project; do
+    name=$(echo "$project" | jq -r '.name')
+    project_prefix=$(echo "$project" | jq -r '.branch_prefix // empty')
+    paused=$(echo "$project" | jq -r '.paused')
+
+    if [ "$paused" = "true" ]; then
+      printf "| %-20s | %-15s | %-18s |\n" "$name" "paused" "-"
+      continue
+    fi
+
+    local repos=$(echo "$project" | jq -c '.repos[]')
+    local status_text="idle"
+    local best_merge_hours=999999
+
+    while IFS= read -r repo_entry; do
+      repo=$(echo "$repo_entry" | jq -r '.repo')
+      repo_prefix=$(echo "$repo_entry" | jq -r '.branch_prefix // empty')
+      local branch_prefix="${repo_prefix:-${project_prefix:-$DEFAULT_BRANCH_PREFIX}}"
+
+      # Check open PRs
+      open_count=$(gh pr list --repo "$repo" --state open --search "head:$branch_prefix" --json number 2>/dev/null | jq 'length' 2>/dev/null || echo "0")
+
+      if [ "$open_count" -gt 0 ]; then
+        status_text="PR open"
+      fi
+
+      # Last merged PR (track most recent across repos)
+      last_merged=$(gh pr list --repo "$repo" --state merged --search "head:$branch_prefix" --json mergedAt --jq 'sort_by(.mergedAt) | last | .mergedAt' 2>/dev/null || echo "")
+
+      if [ -n "$last_merged" ] && [ "$last_merged" != "null" ]; then
+        hours_ago=$(hours_since "$last_merged")
+        if [ "$hours_ago" -lt "$best_merge_hours" ]; then
+          best_merge_hours="$hours_ago"
+        fi
+      fi
+    done <<< "$repos"
+
+    if [ "$best_merge_hours" -lt 999999 ]; then
+      merge_text="${best_merge_hours}h ago"
+    else
+      merge_text="none"
+    fi
+
+    printf "| %-20s | %-15s | %-18s |\n" "$name" "$status_text" "$merge_text"
+  done <<< "$projects"
+
+  echo ""
+}
+
+# --- Subcommand: start ---
+cmd_start() {
+  if ! [ -f "$PLIST_SRC" ]; then
+    echo "Error: plist not found at $PLIST_SRC"
+    exit 1
+  fi
+
+  mkdir -p "$HOME/Library/LaunchAgents"
+  mkdir -p "$LOG_DIR"
+  cp "$PLIST_SRC" "$PLIST_DST"
+
+  # Unload first if already loaded
+  launchctl unload "$PLIST_DST" 2>/dev/null || true
+  launchctl load "$PLIST_DST"
+
+  echo "Orchestrator started (runs every 30 minutes)"
+  echo "Logs: $LOG_DIR"
+}
+
+# --- Subcommand: stop ---
+cmd_stop() {
+  if launchctl list "$PLIST_NAME" &>/dev/null; then
+    launchctl unload "$PLIST_DST"
+    echo "Orchestrator stopped"
+  else
+    echo "Orchestrator is not running"
+  fi
+}
+
+# --- Subcommand: logs ---
+cmd_logs() {
+  mkdir -p "$LOG_DIR"
+  local latest
+  latest=$(ls -t "$LOG_DIR"/orchestrator-*.log 2>/dev/null | head -1)
+
+  if [ -z "$latest" ]; then
+    echo "No log files found in $LOG_DIR"
+    echo "Run 'cpm run' first to generate logs."
+    exit 0
+  fi
+
+  echo "Tailing $latest (Ctrl+C to stop)"
+  echo "---"
+  tail -f "$latest"
+}
+
+# --- Main ---
+case "${1:-help}" in
+  run)    cmd_run ;;
+  status) cmd_status ;;
+  start)  cmd_start ;;
+  stop)   cmd_stop ;;
+  logs)   cmd_logs ;;
+  help|--help|-h)
+    echo "Usage: cpm <command>"
+    echo ""
+    echo "Commands:"
+    echo "  run      Execute the orchestrator once"
+    echo "  start    Enable the scheduler (every 30 min)"
+    echo "  stop     Disable the scheduler"
+    echo "  status   Show project states and scheduler status"
+    echo "  logs     Tail recent orchestrator logs"
+    echo ""
+    ;;
+  *)
+    echo "Unknown command: $1"
+    echo "Run 'cpm help' for usage"
+    exit 1
+    ;;
+esac
