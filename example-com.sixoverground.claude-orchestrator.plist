@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.sixoverground.claude-orchestrator</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <!-- UPDATE: absolute path to your cpm script -->
+        <string>/Users/YOURUSERNAME/Code/claude-project-manager/cpm</string>
+        <string>run</string>
+    </array>
+
+    <key>StartInterval</key>
+    <integer>1800</integer>
+
+    <key>StandardOutPath</key>
+    <!-- UPDATE: your home directory -->
+    <string>/Users/YOURUSERNAME/Library/Logs/claude-orchestrator/launchd-stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <!-- UPDATE: your home directory -->
+    <string>/Users/YOURUSERNAME/Library/Logs/claude-orchestrator/launchd-stderr.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <!-- UPDATE: ensure claude and gh are on this PATH -->
+        <string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <!-- UPDATE: your home directory -->
+        <string>/Users/YOURUSERNAME</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>WorkingDirectory</key>
+    <!-- UPDATE: absolute path to this repo -->
+    <string>/Users/YOURUSERNAME/Code/claude-project-manager</string>
+</dict>
+</plist>

@@ -31,6 +31,10 @@ cd claude-project-manager
 cp example-projects.json projects.json
 # Edit projects.json with your repos and trigger IDs
 
+# Create your launchd plist from the example
+cp example-com.sixoverground.claude-orchestrator.plist com.sixoverground.claude-orchestrator.plist
+# Edit the plist — replace YOURUSERNAME with your macOS username
+
 # Make cpm executable
 chmod +x cpm
 
