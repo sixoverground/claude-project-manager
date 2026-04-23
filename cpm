@@ -308,6 +308,77 @@ cmd_logs() {
   tail -f "$latest"
 }
 
+# --- Subcommand: add ---
+cmd_add() {
+  shift  # remove "add" from args
+
+  local name="" trigger_id="" branch_prefix=""
+  local -a repos=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --name)       name="$2"; shift 2 ;;
+      --repo)       repos+=("$2"); shift 2 ;;
+      --trigger)    trigger_id="$2"; shift 2 ;;
+      --prefix)     branch_prefix="$2"; shift 2 ;;
+      *)
+        echo "Unknown option: $1"
+        echo "Usage: cpm add --name <name> --repo <owner/repo> [--repo <owner/repo>] --trigger <trigger_id> [--prefix <branch_prefix>]"
+        exit 1
+        ;;
+    esac
+  done
+
+  # Validate required fields
+  if [ -z "$name" ]; then
+    echo "Error: --name is required"
+    exit 1
+  fi
+  if [ ${#repos[@]} -eq 0 ]; then
+    echo "Error: at least one --repo is required"
+    exit 1
+  fi
+  if [ -z "$trigger_id" ]; then
+    echo "Error: --trigger is required"
+    exit 1
+  fi
+
+  # Check for duplicate name
+  if jq -e --arg n "$name" '.projects[] | select(.name == $n)' "$PROJECTS_FILE" >/dev/null 2>&1; then
+    echo "Error: project '$name' already exists"
+    exit 1
+  fi
+
+  # Build repos array JSON
+  local repos_json="["
+  local first=true
+  for r in "${repos[@]}"; do
+    [ "$first" = "true" ] && first=false || repos_json+=","
+    repos_json+="{\"repo\":\"$r\"}"
+  done
+  repos_json+="]"
+
+  # Build project JSON
+  local project_json
+  project_json=$(jq -n \
+    --arg name "$name" \
+    --argjson repos "$repos_json" \
+    --arg trigger "$trigger_id" \
+    '{name: $name, repos: $repos, trigger_id: $trigger, paused: false}')
+
+  # Add optional branch_prefix
+  if [ -n "$branch_prefix" ]; then
+    project_json=$(echo "$project_json" | jq --arg p "$branch_prefix" '. + {branch_prefix: $p}')
+  fi
+
+  # Append to projects.json
+  jq --argjson proj "$project_json" '.projects += [$proj]' "$PROJECTS_FILE" > "$PROJECTS_FILE.tmp" \
+    && mv "$PROJECTS_FILE.tmp" "$PROJECTS_FILE"
+
+  echo "Added project '$name'"
+  echo "$project_json" | jq .
+}
+
 # --- Main ---
 case "${1:-help}" in
   run)    cmd_run ;;
@@ -315,6 +386,7 @@ case "${1:-help}" in
   start)  cmd_start ;;
   stop)   cmd_stop ;;
   logs)   cmd_logs ;;
+  add)    cmd_add "$@" ;;
   help|--help|-h)
     echo "Usage: cpm <command>"
     echo ""
@@ -324,6 +396,10 @@ case "${1:-help}" in
     echo "  stop     Disable the scheduler"
     echo "  status   Show project states and scheduler status"
     echo "  logs     Tail recent orchestrator logs"
+    echo "  add      Add a project to the registry"
+    echo ""
+    echo "Add usage:"
+    echo "  cpm add --name <name> --repo <owner/repo> [--repo <owner/repo>] --trigger <trigger_id> [--prefix <branch_prefix>]"
     echo ""
     ;;
   *)

@@ -50,6 +50,17 @@ cpm start    # Enable the launchd scheduler (every 30 min)
 cpm stop     # Disable the launchd scheduler
 cpm status   # Show project states and scheduler status
 cpm logs     # Tail recent orchestrator logs
+cpm add      # Add a project to the registry
+```
+
+### Adding a project
+
+```bash
+# Single repo
+cpm add --name my-api --repo yourorg/my-api --trigger trig_YOUR_TRIGGER_ID
+
+# Multi-repo with custom branch prefix
+cpm add --name my-app --repo yourorg/app-web --repo yourorg/app-ios --trigger trig_YOUR_TRIGGER_ID --prefix "cpm/"
 ```
 
 ## Configuration
