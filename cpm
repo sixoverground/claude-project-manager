@@ -34,7 +34,7 @@ hours_since() {
   # Strip fractional seconds and handle Z suffix
   local clean_date="${iso_date%%.*}"
   clean_date="${clean_date%Z}"
-  then_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$clean_date" "+%s" 2>/dev/null || echo "0")
+  then_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%S" "$clean_date" "+%s" 2>/dev/null || echo "0")
   now_epoch=$(date "+%s")
   echo $(( (now_epoch - then_epoch) / 3600 ))
 }
