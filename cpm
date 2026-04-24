@@ -39,6 +39,21 @@ hours_since() {
   echo $(( (now_epoch - then_epoch) / 3600 ))
 }
 
+time_ago() {
+  local iso_date="$1"
+  local then_epoch now_epoch diff_seconds
+  local clean_date="${iso_date%%.*}"
+  clean_date="${clean_date%Z}"
+  then_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%S" "$clean_date" "+%s" 2>/dev/null || echo "0")
+  now_epoch=$(date "+%s")
+  diff_seconds=$(( now_epoch - then_epoch ))
+  if [ "$diff_seconds" -lt 3600 ]; then
+    echo "$(( diff_seconds / 60 ))m ago"
+  else
+    echo "$(( diff_seconds / 3600 ))h ago"
+  fi
+}
+
 cleanup_logs() {
   if [ -d "$LOG_DIR" ]; then
     find "$LOG_DIR" -name "orchestrator-*.log" -mtime +14 -delete 2>/dev/null || true
@@ -225,6 +240,7 @@ cmd_status() {
 
     local repos=$(echo "$project" | jq -c '.repos[]')
     local status_text="idle"
+    local best_merge_date=""
     local best_merge_hours=999999
 
     while IFS= read -r repo_entry; do
@@ -246,12 +262,13 @@ cmd_status() {
         hours_ago=$(hours_since "$last_merged")
         if [ "$hours_ago" -lt "$best_merge_hours" ]; then
           best_merge_hours="$hours_ago"
+          best_merge_date="$last_merged"
         fi
       fi
     done <<< "$repos"
 
-    if [ "$best_merge_hours" -lt 999999 ]; then
-      merge_text="${best_merge_hours}h ago"
+    if [ -n "$best_merge_date" ]; then
+      merge_text=$(time_ago "$best_merge_date")
     else
       merge_text="none"
     fi
