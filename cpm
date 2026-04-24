@@ -156,9 +156,10 @@ cmd_run() {
       if [ -n "$last_activity" ] && [ "$last_activity" != "null" ]; then
         activity_hours=$(hours_since "$last_activity")
         if [ "$activity_hours" -lt "$ACTIVITY_WINDOW_HOURS" ]; then
-          log_to_file "[$name] SKIP: recent branch activity ${activity_hours}h ago in $repo"
+          local activity_ago=$(time_ago "$last_activity")
+          log_to_file "[$name] SKIP: recent branch activity $activity_ago in $repo"
           skip_project=true
-          skip_reason="Session likely active ($repo, ${activity_hours}h ago)"
+          skip_reason="Session likely active ($repo, $activity_ago)"
           break
         fi
       fi
@@ -177,14 +178,16 @@ cmd_run() {
       continue
     fi
 
+    local best_time_ago=$(time_ago "$best_merged_at")
+
     # Exception: merged > 4h ago + no open PR + no recent branch activity → dispatch anyway
     if [ "$best_hours_ago" -gt "$MERGE_WINDOW_HOURS" ]; then
-      log_to_file "[$name] DISPATCH (exception): PR #$best_merged_pr_num merged ${best_hours_ago}h ago, no open PR, no recent activity — previous run may have failed"
+      log_to_file "[$name] DISPATCH (exception): PR #$best_merged_pr_num merged $best_time_ago, no open PR, no recent activity — previous run may have failed"
     fi
 
     # Step 4: Dispatch
-    log "[$name] DISPATCH: PR #$best_merged_pr_num ($best_merged_branch) in $best_merged_repo merged ${best_hours_ago}h ago"
-    log_to_file "[$name] DISPATCH: PR #$best_merged_pr_num ($best_merged_branch) in $best_merged_repo merged ${best_hours_ago}h ago"
+    log "[$name] DISPATCH: PR #$best_merged_pr_num ($best_merged_branch) in $best_merged_repo merged $best_time_ago"
+    log_to_file "[$name] DISPATCH: PR #$best_merged_pr_num ($best_merged_branch) in $best_merged_repo merged $best_time_ago"
 
     dispatch_output=$(claude -p \
       --allowed-tools "RemoteTrigger" \
@@ -194,7 +197,7 @@ cmd_run() {
       2>&1) || true
 
     log_to_file "[$name] Dispatch output: $dispatch_output"
-    summary_rows+=("| $name | merged ${best_hours_ago}h | DISPATCH | $best_merged_branch merged, starting next |")
+    summary_rows+=("| $name | merged $best_time_ago | DISPATCH | $best_merged_branch merged, starting next |")
 
   done <<< "$projects"
 
