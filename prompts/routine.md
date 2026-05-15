@@ -4,7 +4,7 @@ You are designing a phased implementation plan for this project. The plan will b
 
 ## Constraints
 
-- Each phase must be a single PR from a `claude/`-prefixed branch (e.g., `claude/auth-flow`, `claude/data-layer`). Some projects use `cpm/` instead; pick one and use it consistently.
+- Each phase must be a single PR from a `claude/`-prefixed branch (e.g., `claude/auth-flow`, `claude/data-layer`).
 - Phases execute sequentially: phase N+1 only starts after phase N's PR is merged
 - Each phase must be independently mergeable and leave the project in a working state
 - Each phase should be completable in a single Claude session (target: under 2 hours of work)
@@ -39,9 +39,9 @@ For each phase, include:
 Include this section verbatim, filling in the project-specific values:
 
 ```
-Phase progression is managed by a central orchestrator (`claude-project-manager`).
+Phase progression is managed by `claude-project-manager` (cpm), running locally.
 
-- Orchestrator polls every 30 minutes
+- cpm polls every 30 minutes
 - Detects merged `claude/` PRs and dispatches the next phase via remote trigger
 - Branch prefix: `claude/`
 - Trigger ID: [to be assigned after creating the routine in Claude Code]
@@ -59,7 +59,7 @@ In the PR Sequence Table, add a **Repo** column:
 | 2 | `claude/metering-ios` | ios | 429 handling | Phase 1b | Pending |
 | 3 | `claude/tracking` | both | Shot status + reorder | Phase 2 | Pending |
 
-The orchestrator checks all repos in the group before dispatching: if any repo has an open PR or recent branch activity, the next phase is held.
+cpm checks all repos in the group before dispatching: if any repo has an open PR or recent branch activity, the next phase is held.
 
 ## Guidelines for phase design
 

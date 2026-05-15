@@ -30,7 +30,7 @@ Four concepts you need to know:
 - **Phased plan**: a markdown file (typically `docs/plans/<name>.md`) in *your project repo* listing the work as a sequence of PRs. Each phase is independently mergeable, small enough to finish in one Claude session.
 - **Claude routine**: a saved Claude Code prompt that, when invoked, reads the plan and works on the next phase. One routine per project.
 - **Trigger**: the remote handle for a routine. Created in Claude Code; identified by a string like `trig_abc123...`.
-- **Orchestrator (`cpm`)**: this tool. Watches your repos on a 30-minute loop and fires triggers when the next phase is ready to start.
+- **Claude Project Manager (`cpm`)**: this tool. Watches your repos on a 30-minute loop and fires triggers when the next phase is ready to start.
 
 ## Prerequisites
 
@@ -89,7 +89,7 @@ claude -p --allowed-tools "RemoteTrigger" --dangerously-skip-permissions \
 
 You don't need to remember that. `cpm` handles it. You just need the trigger_id.
 
-### Orchestrator (`cpm`)
+### Claude Project Manager (`cpm`)
 
 A zsh script + launchd plist. Every 30 minutes it walks `projects.json`, checks each project's repos via `gh`, and dispatches the next phase when the previous one merged and no session is currently active. See [How it works](#how-it-works) below or [CLAUDE.md](CLAUDE.md) for the full step-by-step.
 
@@ -104,7 +104,37 @@ End-to-end walkthrough. Assumes you've already run `cpm init`, `cpm doctor`, and
    ```
    Open Claude Code in that repo. Paste the prompt and add a description of what you want to build. Claude writes `docs/plans/<name>.md`. Review it, then commit and push to `main`.
 
-2. **Create a Claude routine.** In Claude Code, create a new routine using the same prompt. Save it so it persists. Find its Trigger ID in the Claude Code UI or via `claude trigger list` (depending on your Claude Code version).
+2. **Create a Claude routine via the Claude Code CLI.**
+
+   In your project repo, copy the routine prompt to your clipboard:
+   ```bash
+   cpm prompt --copy
+   ```
+
+   Start a Claude Code session in the same repo, then create the routine with `/schedule`:
+   ```bash
+   claude
+   ```
+   ```
+   /schedule weekly, run the next phase for this project
+   ```
+
+   `/schedule` is the only way to create a routine from the CLI today, and it requires a schedule trigger (minimum cadence: 1 hour). cpm fires the routine directly via `RemoteTrigger`, so the cadence doesn't matter functionally; pick anything (weekly is fine).
+
+   Claude walks you through configuration conversationally. When it asks for the prompt, paste from your clipboard. Select the repo(s) you want the routine to operate on.
+
+   After the routine is created, list it to see the trigger ID:
+   ```
+   /schedule list
+   ```
+   The ID format is `trig_01ABCDE...`. Copy it.
+
+   **Disable the schedule** so the routine only fires when cpm tells it to. The CLI can't currently disable a schedule without removing the routine, so:
+   - Open [claude.ai/code/routines](https://claude.ai/code/routines)
+   - Click your routine
+   - Toggle off the **Repeats** section
+
+   The trigger ID stays valid even when the schedule is paused.
 
 3. **Register the project with cpm.**
    ```bash
@@ -124,7 +154,7 @@ End-to-end walkthrough. Assumes you've already run `cpm init`, `cpm doctor`, and
 5. **Watch progress.**
    ```bash
    cpm status   # one-line summary per project
-   cpm logs     # tail the orchestrator log
+   cpm logs     # tail the run log
    ```
 
 ## Commands
@@ -139,11 +169,11 @@ End-to-end walkthrough. Assumes you've already run `cpm init`, `cpm doctor`, and
 | `cpm pause <name>`   | Skip this project during runs. |
 | `cpm resume <name>`  | Un-pause. |
 | `cpm prompt`         | Print the routine prompt. `--copy` to clipboard, `--save <path>` to file. |
-| `cpm run`            | Execute the orchestrator once. |
+| `cpm run`            | Execute cpm once (check all projects, dispatch as needed). |
 | `cpm start`          | Enable the launchd scheduler (every 30 min). |
 | `cpm stop`           | Disable the scheduler. |
 | `cpm status`         | Show project states and scheduler status. |
-| `cpm logs`           | Tail recent orchestrator logs. |
+| `cpm logs`           | Tail recent cpm logs. |
 | `cpm trigger <name>` | Manually dispatch a project's routine. |
 
 ## Configuration
@@ -176,15 +206,11 @@ Each project entry defines the repos to monitor and the routine to dispatch.
 | `branch_prefix` | No  | Branch prefix to monitor. Default: `claude/`. |
 | `paused`        | No  | `true` to skip this project. Default: `false`. |
 
-Each repo entry can also override `branch_prefix` if repos within a project use different conventions:
-
-```json
-{ "repo": "yourorg/legacy-api", "branch_prefix": "cpm/" }
-```
+Each repo entry can also override `branch_prefix` if repos within a project use different conventions.
 
 ### Multi-repo projects
 
-A single routine can operate across multiple repos. The orchestrator checks all repos before dispatching:
+A single routine can operate across multiple repos. cpm checks all repos before dispatching:
 
 - If **any** repo has an open phase PR, the project is skipped.
 - The most recent merge **across all repos** determines dispatch timing.
@@ -238,7 +264,7 @@ Logs live at `~/Library/Logs/claude-orchestrator/`:
 
 ## Contributing
 
-This repo dogfoods its own orchestrator. Significant changes are organized as phased plans and shipped one phase per PR. See [CONTRIBUTING.md](CONTRIBUTING.md).
+This repo dogfoods itself. Significant changes are organized as phased plans and shipped one phase per PR. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

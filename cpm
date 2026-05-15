@@ -124,8 +124,8 @@ cmd_run() {
 
   cleanup_logs
 
-  log "Orchestrator run starting"
-  log_to_file "=== Orchestrator run starting ==="
+  log "cpm run starting"
+  log_to_file "=== cpm run starting ==="
 
   local projects
   projects=$(jq -c '.projects[]' "$PROJECTS_FILE")
@@ -287,7 +287,7 @@ cmd_run() {
   done
   echo ""
 
-  log_to_file "=== Orchestrator run complete ==="
+  log_to_file "=== cpm run complete ==="
 }
 
 # --- Subcommand: status ---
@@ -552,7 +552,7 @@ cmd_start() {
   launchctl unload "$PLIST_DST" 2>/dev/null || true
   launchctl load "$PLIST_DST"
 
-  echo "Orchestrator started (runs every 30 minutes)"
+  echo "cpm scheduler started (runs every 30 minutes)"
   echo "Logs: $LOG_DIR"
 }
 
@@ -560,9 +560,9 @@ cmd_start() {
 cmd_stop() {
   if launchctl list "$PLIST_NAME" &>/dev/null; then
     launchctl unload "$PLIST_DST"
-    echo "Orchestrator stopped"
+    echo "cpm scheduler stopped"
   else
-    echo "Orchestrator is not running"
+    echo "cpm scheduler is not running"
   fi
 }
 
@@ -712,10 +712,20 @@ cmd_new() {
   read "_ack?Press enter once the plan is committed (Ctrl-C to abort) "
 
   echo ""
-  echo "Step 2: Create a Claude routine."
+  echo "Step 2: Create a Claude routine via the Claude Code CLI."
   echo ""
-  echo "  In Claude Code (in your project repo), create a new routine with the"
-  echo "  same prompt. Save it, then copy its Trigger ID."
+  echo "  In your project repo, start a session:"
+  echo "    cd <your project repo> && claude"
+  echo ""
+  echo "  Then in the session:"
+  echo "    /schedule weekly, run the next phase for this project"
+  echo ""
+  echo "  Paste the prompt when asked (use 'cpm prompt --copy' first). Select"
+  echo "  the same repo(s) you listed above. After it's created:"
+  echo "    /schedule list                   (to see the trigger ID)"
+  echo ""
+  echo "  Disable the schedule at https://claude.ai/code/routines so the"
+  echo "  routine only fires when cpm dispatches it."
   echo ""
 
   local trigger_id=""
@@ -847,15 +857,15 @@ case "${1:-help}" in
     echo "  doctor   Check dependencies, auth, and project configuration"
     echo ""
     echo "Commands:"
-    echo "  run      Execute the orchestrator once"
+    echo "  run      Execute cpm once (check all projects, dispatch as needed)"
     echo "  start    Enable the scheduler (every 30 min)"
     echo "  stop     Disable the scheduler"
     echo "  status   Show project states and scheduler status"
-    echo "  logs     Tail recent orchestrator logs"
+    echo "  logs     Tail recent cpm logs"
     echo "  new      Add a project via an interactive wizard"
     echo "  add      Add a project to the registry (flag-based)"
     echo "  remove   Remove a project from the registry"
-    echo "  pause    Pause a project (skip during orchestrator runs)"
+    echo "  pause    Pause a project (skip during cpm runs)"
     echo "  resume   Resume a paused project"
     echo "  trigger  Manually dispatch a project's routine"
     echo "  prompt   Print the routine prompt (use with --copy or --save)"

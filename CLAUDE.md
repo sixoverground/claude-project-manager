@@ -1,4 +1,4 @@
-# Claude Project Manager: Orchestrator Logic
+# Claude Project Manager: Run Logic
 
 This is the canonical reference for what `cpm` does on each run. For setup and CLI usage, see [README.md](README.md).
 
@@ -87,4 +87,4 @@ After checking all projects, print a table:
 
 ## Why local
 
-The orchestrator runs locally via the `cpm` zsh script, not as a remote Claude routine. This avoids GitHub token scoping issues since `gh` is already authenticated on the user's machine. The check logic (steps 1-3) is implemented directly in bash, with no LLM needed. Claude is only invoked for the dispatch step via `claude -p` with the `RemoteTrigger` tool.
+cpm runs locally via the `cpm` zsh script, not as a remote Claude routine. This avoids GitHub token scoping issues since `gh` is already authenticated on the user's machine. The check logic (steps 1-3) is implemented directly in bash, with no LLM needed. Claude is only invoked for the dispatch step via `claude -p` with the `RemoteTrigger` tool.

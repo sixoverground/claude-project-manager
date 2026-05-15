@@ -4,7 +4,7 @@ Thanks for your interest in `claude-project-manager`.
 
 ## How this repo works
 
-cpm dogfoods its own orchestrator. Significant changes are organized as phased plans and shipped one phase per PR using the `claude/` branch prefix. The plans live in `docs/plans/` once written.
+cpm dogfoods itself. Significant changes are organized as phased plans and shipped one phase per PR using the `claude/` branch prefix. The plans live in `docs/plans/` once written.
 
 ## Local development
 
@@ -25,5 +25,5 @@ cpm dogfoods its own orchestrator. Significant changes are organized as phased p
 Include:
 - macOS version
 - Output of `cpm doctor`
-- Relevant log excerpts from `~/Library/Logs/claude-orchestrator/`
+- Relevant log excerpts from `~/Library/Logs/claude-orchestrator/` (the log directory uses the legacy `claude-orchestrator` identifier)
 - The `projects.json` entry (with trigger IDs redacted)
