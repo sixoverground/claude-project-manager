@@ -412,6 +412,98 @@ cmd_init() {
   echo "  3. cpm start        # enable the 30-min launchd scheduler"
 }
 
+# --- Subcommand: doctor ---
+cmd_doctor() {
+  local fails=0
+
+  echo "cpm doctor"
+
+  if command -v claude &>/dev/null; then
+    echo "  [ok]   claude:        $(claude --version 2>&1 | head -1)"
+  else
+    echo "  [fail] claude:        not installed (https://docs.anthropic.com/en/docs/claude-code)"
+    fails=$((fails+1))
+  fi
+
+  if command -v gh &>/dev/null; then
+    echo "  [ok]   gh:            $(gh --version 2>&1 | head -1)"
+  else
+    echo "  [fail] gh:            not installed (https://cli.github.com)"
+    fails=$((fails+1))
+  fi
+
+  if gh auth status &>/dev/null; then
+    echo "  [ok]   gh auth:       logged in"
+  else
+    echo "  [fail] gh auth:       not authenticated (run 'gh auth login')"
+    fails=$((fails+1))
+  fi
+
+  if command -v jq &>/dev/null; then
+    echo "  [ok]   jq:            $(jq --version 2>&1)"
+  else
+    echo "  [fail] jq:            not installed (brew install jq)"
+    fails=$((fails+1))
+  fi
+
+  if [ -f "$PROJECTS_FILE" ]; then
+    if jq -e '.projects' "$PROJECTS_FILE" &>/dev/null; then
+      local count
+      count=$(jq '.projects | length' "$PROJECTS_FILE")
+      echo "  [ok]   projects.json: parses ($count projects)"
+    else
+      echo "  [fail] projects.json: invalid JSON or missing .projects array"
+      fails=$((fails+1))
+    fi
+  else
+    echo "  [fail] projects.json: missing (run 'cpm init')"
+    fails=$((fails+1))
+  fi
+
+  if [ -f "$PLIST_SRC" ]; then
+    echo "  [ok]   plist:         rendered at $PLIST_SRC"
+  else
+    echo "  [fail] plist:         missing (run 'cpm init')"
+    fails=$((fails+1))
+  fi
+
+  if [ -f "$PLIST_DST" ]; then
+    if launchctl list "$PLIST_NAME" &>/dev/null; then
+      echo "  [ok]   scheduler:     loaded"
+    else
+      echo "  [warn] scheduler:     installed but not loaded (run 'cpm start')"
+    fi
+  else
+    echo "  [warn] scheduler:     not installed (run 'cpm start' to enable)"
+  fi
+
+  if command -v cpm &>/dev/null; then
+    echo "  [ok]   cpm on PATH:   yes"
+  else
+    echo "  [warn] cpm on PATH:   no (optional: ln -s \"$PROJECT_DIR/cpm\" /opt/homebrew/bin/cpm)"
+  fi
+
+  if [ -f "$PROJECTS_FILE" ] && jq -e '.projects' "$PROJECTS_FILE" &>/dev/null; then
+    local bad
+    bad=$(jq -r '.projects[] | select(.trigger_id == null or .trigger_id == "" or (.trigger_id | startswith("trig_REPLACE"))) | .name' "$PROJECTS_FILE")
+    if [ -n "$bad" ]; then
+      while IFS= read -r project_name; do
+        echo "  [fail] $project_name: trigger_id missing or still a placeholder"
+        fails=$((fails+1))
+      done <<< "$bad"
+    fi
+  fi
+
+  echo ""
+  if [ "$fails" -eq 0 ]; then
+    echo "All checks passed."
+    exit 0
+  else
+    echo "$fails check(s) failed."
+    exit 1
+  fi
+}
+
 # --- Subcommand: start ---
 cmd_start() {
   if ! [ -f "$PLIST_SRC" ]; then
@@ -619,6 +711,7 @@ cmd_trigger() {
 # --- Main ---
 case "${1:-help}" in
   init)   cmd_init "$@" ;;
+  doctor) cmd_doctor ;;
   run)    cmd_run ;;
   status) cmd_status ;;
   start)  cmd_start ;;
@@ -634,6 +727,7 @@ case "${1:-help}" in
     echo ""
     echo "Setup:"
     echo "  init     Generate plist + empty projects.json (one-time setup)"
+    echo "  doctor   Check dependencies, auth, and project configuration"
     echo ""
     echo "Commands:"
     echo "  run      Execute the orchestrator once"
