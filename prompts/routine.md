@@ -4,7 +4,7 @@ You are designing a phased implementation plan for this project. The plan will b
 
 ## Constraints
 
-- Each phase must be a single PR from a `cpm/`-prefixed branch (e.g., `cpm/auth-flow`, `cpm/data-layer`)
+- Each phase must be a single PR from a `claude/`-prefixed branch (e.g., `claude/auth-flow`, `claude/data-layer`). Some projects use `cpm/` instead — pick one and use it consistently.
 - Phases execute sequentially — phase N+1 only starts after phase N's PR is merged
 - Each phase must be independently mergeable and leave the project in a working state
 - Each phase should be completable in a single Claude session (target: under 2 hours of work)
@@ -22,8 +22,8 @@ Create a `docs/plans/<PLAN_NAME>.md` file with:
 
 | PR | Branch | Scope | Phase | Status |
 |----|--------|-------|-------|--------|
-| 1 | `cpm/foundation` | Project setup, dependencies, base config | Phase 0: Foundation | Pending |
-| 2 | `cpm/auth-flow` | Authentication screens and logic | Phase 1: Auth | Pending |
+| 1 | `claude/foundation` | Project setup, dependencies, base config | Phase 0: Foundation | Pending |
+| 2 | `claude/auth-flow` | Authentication screens and logic | Phase 1: Auth | Pending |
 | ... | ... | ... | ... | ... |
 
 ### 3. Phase Details
@@ -42,9 +42,9 @@ Include this section verbatim, filling in the project-specific values:
 Phase progression is managed by a central orchestrator (`claude-project-manager`).
 
 - Orchestrator polls every 30 minutes
-- Detects merged `cpm/` PRs and dispatches the next phase via remote trigger
-- Branch prefix: `cpm/`
-- Trigger ID: [to be assigned after `claude trigger create`]
+- Detects merged `claude/` PRs and dispatches the next phase via remote trigger
+- Branch prefix: `claude/`
+- Trigger ID: [to be assigned after creating the routine in Claude Code]
 ```
 
 ## Multi-repo routines

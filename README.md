@@ -27,12 +27,12 @@ This keeps phased plans moving without manual intervention — merge a PR, and t
 git clone git@github.com:sixoverground/claude-project-manager.git
 cd claude-project-manager
 
-# Create your projects registry from the example
-cp example-projects.json projects.json
+# Create your projects registry from the template
+cp templates/projects.json.tmpl projects.json
 # Edit projects.json with your repos and trigger IDs
 
-# Create your launchd plist from the example
-cp example-com.sixoverground.claude-orchestrator.plist com.sixoverground.claude-orchestrator.plist
+# Create your launchd plist from the template
+cp templates/com.sixoverground.claude-orchestrator.plist.tmpl com.sixoverground.claude-orchestrator.plist
 # Edit the plist — replace YOURUSERNAME with your macOS username
 
 # Make cpm executable
@@ -124,4 +124,4 @@ Logs are written to `~/Library/Logs/claude-orchestrator/`. Log files rotate dail
 
 ## Phased plan design
 
-See [EXAMPLE_PROMPT.md](EXAMPLE_PROMPT.md) for a prompt template you can use when having Claude design a phased implementation plan compatible with this orchestrator.
+See [prompts/routine.md](prompts/routine.md) for the prompt you give Claude when designing a phased plan or creating the routine that executes phases.
