@@ -1,4 +1,4 @@
-# Claude Project Manager — Orchestrator Logic
+# Claude Project Manager: Orchestrator Logic
 
 This is the canonical reference for what `cpm` does on each run. For setup and CLI usage, see [README.md](README.md).
 
@@ -19,7 +19,7 @@ Each project may have one or more repos. All repos are checked before making a d
 gh pr list --repo {repo} --state open --search "head:{branch_prefix}" --json number,headRefName,createdAt
 ```
 
-If **any** repo has an open phase PR → **SKIP** (current phase still in progress).
+If **any** repo has an open phase PR, SKIP (current phase still in progress).
 
 ### Step 2: Check for recently merged phase PR
 
@@ -27,7 +27,7 @@ If **any** repo has an open phase PR → **SKIP** (current phase still in progre
 gh pr list --repo {repo} --state merged --search "head:{branch_prefix}" --json number,mergedAt,headRefName --jq 'sort_by(.mergedAt) | last'
 ```
 
-If the most recently merged phase PR (across all repos) was merged within the last 4 hours → a new phase should be started.
+If the most recently merged phase PR (across all repos) was merged within the last 4 hours, a new phase should be started.
 
 ### Step 3: Guard against duplicate sessions
 
@@ -45,7 +45,7 @@ gh api graphql -f query='query($owner:String!,$repo:String!,$prefix:String!) {
 
 (The REST `/repos/X/branches` endpoint doesn't return `committer.date`, so GraphQL is required.)
 
-If **any** repo has branch activity less than 2 hours old → **SKIP** (session likely active or just finished).
+If **any** repo has branch activity less than 2 hours old, SKIP (session likely active or just finished).
 
 ### Step 4: Dispatch dedup
 
@@ -65,12 +65,12 @@ claude -p --allowed-tools "RemoteTrigger" --dangerously-skip-permissions \
 
 | Open phase PR | Merged PR (last 4h) | Recent branch activity (< 2h) | Action |
 |:-:|:-:|:-:|---|
-| Yes | – | – | SKIP — work in progress |
-| No | Yes | No | **DISPATCH** — start next phase |
-| No | Yes | Yes | SKIP — session likely active |
-| No | No | – | SKIP — no recent merges |
+| Yes | any | any | SKIP (work in progress) |
+| No | Yes | No | **DISPATCH** (start next phase) |
+| No | Yes | Yes | SKIP (session likely active) |
+| No | No | any | SKIP (no recent merges) |
 
-**Exception:** If a phase PR was merged more than 4 hours ago AND there is no open PR AND no recent branch activity, still dispatch — the previous run may have failed.
+**Exception:** If a phase PR was merged more than 4 hours ago AND there is no open PR AND no recent branch activity, still dispatch. The previous run may have failed.
 
 ## Summary output
 
@@ -87,4 +87,4 @@ After checking all projects, print a table:
 
 ## Why local
 
-The orchestrator runs locally via the `cpm` zsh script, not as a remote Claude routine. This avoids GitHub token scoping issues since `gh` is already authenticated on the user's machine. The check logic (steps 1-3) is implemented directly in bash — no LLM needed. Claude is only invoked for the dispatch step via `claude -p` with the `RemoteTrigger` tool.
+The orchestrator runs locally via the `cpm` zsh script, not as a remote Claude routine. This avoids GitHub token scoping issues since `gh` is already authenticated on the user's machine. The check logic (steps 1-3) is implemented directly in bash, with no LLM needed. Claude is only invoked for the dispatch step via `claude -p` with the `RemoteTrigger` tool.

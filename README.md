@@ -1,6 +1,6 @@
 # Claude Project Manager
 
-A local macOS scheduler that polls GitHub and fires Claude Code routines as soon as phase PRs merge — so a phased implementation plan can advance autonomously while you're away.
+A local macOS scheduler that polls GitHub and fires Claude Code routines as soon as phase PRs merge, so a phased implementation plan can advance autonomously while you're away.
 
 ```
    ┌──────────────┐    every 30m    ┌──────────────┐
@@ -21,23 +21,23 @@ A local macOS scheduler that polls GitHub and fires Claude Code routines as soon
 
 ## What it does (in 30 seconds)
 
-You break a project into phases, where each phase is one PR. You create a Claude Code routine that knows how to read the plan and open the next PR. `cpm` runs on your Mac every 30 minutes — when it sees the latest phase PR has just merged, it fires the routine to start the next phase. Merge, repeat. Walk away.
+You break a project into phases, where each phase is one PR. You create a Claude Code routine that knows how to read the plan and open the next PR. `cpm` runs on your Mac every 30 minutes. When it sees the latest phase PR has just merged, it fires the routine to start the next phase. Merge, repeat. Walk away.
 
 ## The mental model
 
 Four concepts you need to know:
 
-- **Phased plan** — a markdown file (typically `docs/plans/<name>.md`) in *your project repo* listing the work as a sequence of PRs. Each phase is independently mergeable, small enough to finish in one Claude session.
-- **Claude routine** — a saved Claude Code prompt that, when invoked, reads the plan and works on the next phase. One routine per project.
-- **Trigger** — the remote handle for a routine. Created in Claude Code; identified by a string like `trig_abc123…`.
-- **Orchestrator (`cpm`)** — this tool. Watches your repos on a 30-minute loop and fires triggers when the next phase is ready to start.
+- **Phased plan**: a markdown file (typically `docs/plans/<name>.md`) in *your project repo* listing the work as a sequence of PRs. Each phase is independently mergeable, small enough to finish in one Claude session.
+- **Claude routine**: a saved Claude Code prompt that, when invoked, reads the plan and works on the next phase. One routine per project.
+- **Trigger**: the remote handle for a routine. Created in Claude Code; identified by a string like `trig_abc123...`.
+- **Orchestrator (`cpm`)**: this tool. Watches your repos on a 30-minute loop and fires triggers when the next phase is ready to start.
 
 ## Prerequisites
 
 - macOS (uses launchd for scheduling)
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) (`claude`), authenticated
 - [GitHub CLI](https://cli.github.com/) (`gh`), authenticated to your repos
-- `jq` — `brew install jq`
+- `jq` (`brew install jq`)
 
 ## Quick start (5 minutes)
 
@@ -53,7 +53,7 @@ cpm new <name>  # walk through onboarding your first project
 cpm start       # enable the 30-minute launchd scheduler
 ```
 
-`cpm init` is idempotent — safe to re-run. It won't overwrite your `projects.json` and won't regenerate the plist unless you pass `--force`.
+`cpm init` is idempotent and safe to re-run. It won't overwrite your `projects.json` and won't regenerate the plist unless you pass `--force`.
 
 ## Concepts
 
@@ -73,9 +73,9 @@ Paste it into Claude Code in your project repo and describe what you want to bui
 
 ### Claude routine
 
-In Claude Code, a *routine* is a saved prompt you can invoke remotely. For a cpm-managed project, you create one routine per project — its job is "read `docs/plans/<name>.md`, find the next phase, do the work, open a PR."
+In Claude Code, a *routine* is a saved prompt you can invoke remotely. For a cpm-managed project, you create one routine per project, and its job is "read `docs/plans/<name>.md`, find the next phase, do the work, open a PR."
 
-Use the same prompt from `cpm prompt`. Save it as a routine. The routine's Trigger ID (`trig_…`) is what you put in `projects.json`.
+Use the same prompt from `cpm prompt`. Save it as a routine. The routine's Trigger ID (`trig_...`) is what you put in `projects.json`.
 
 ### Trigger
 
@@ -84,10 +84,10 @@ The Trigger ID is how `cpm` calls the routine. `cpm` dispatches via:
 ```bash
 claude -p --allowed-tools "RemoteTrigger" --dangerously-skip-permissions \
   --no-session-persistence \
-  "Run the remote trigger with ID trig_… ..."
+  "Run the remote trigger with ID trig_... ..."
 ```
 
-You don't need to remember that — `cpm` handles it. You just need the trigger_id.
+You don't need to remember that. `cpm` handles it. You just need the trigger_id.
 
 ### Orchestrator (`cpm`)
 
@@ -95,7 +95,7 @@ A zsh script + launchd plist. Every 30 minutes it walks `projects.json`, checks 
 
 ## Set up your first project
 
-End-to-end walkthrough — assumes you've already run `cpm init`, `cpm doctor`, and the prerequisites pass.
+End-to-end walkthrough. Assumes you've already run `cpm init`, `cpm doctor`, and the prerequisites pass.
 
 1. **In your project repo, write a phased plan.**
    ```bash
@@ -172,7 +172,7 @@ Each project entry defines the repos to monitor and the routine to dispatch.
 |-------|----------|-------------|
 | `name`          | Yes | Display name. Used in CLI commands. |
 | `repos`         | Yes | Array of `{ "repo": "owner/name" }` objects. |
-| `trigger_id`    | Yes | The routine's trigger ID (`trig_…`). |
+| `trigger_id`    | Yes | The routine's trigger ID (`trig_...`). |
 | `branch_prefix` | No  | Branch prefix to monitor. Default: `claude/`. |
 | `paused`        | No  | `true` to skip this project. Default: `false`. |
 
@@ -194,9 +194,9 @@ A single routine can operate across multiple repos. The orchestrator checks all 
 
 `cpm` checks each project on a 30-minute loop:
 
-1. **Open PR?** Any repo has an open phase PR (matching `branch_prefix`)? → SKIP.
+1. **Open PR?** Any repo has an open phase PR (matching `branch_prefix`)? If so, SKIP.
 2. **Recent merge?** Find the most recent merged phase PR across all repos. If it was within the last 4 hours, this project is a candidate.
-3. **Active session?** If any repo has branch activity within the last 2 hours, → SKIP (a session is likely running).
+3. **Active session?** If any repo has branch activity within the last 2 hours, SKIP (a session is likely running).
 4. **Dispatch dedup.** Each merged PR gets at most 3 dispatches, spaced 2 hours apart. This prevents runaway dispatches when the routine can't open a new PR quickly enough.
 5. **Dispatch.** Fire the routine via `claude -p` + `RemoteTrigger`.
 
@@ -204,37 +204,37 @@ Decision matrix:
 
 | Open PR | Merged (< 4h) | Active branch (< 2h) | Action |
 |:-------:|:--------------:|:---------------------:|--------|
-| Yes | – | – | SKIP |
+| Yes | any | any | SKIP |
 | No  | Yes | No  | DISPATCH |
 | No  | Yes | Yes | SKIP |
-| No  | No  | –   | SKIP |
+| No  | No  | any | SKIP |
 
-**Exception:** if a PR was merged more than 4 hours ago with no open PR and no recent activity, `cpm` dispatches anyway — the previous run may have failed.
+**Exception:** if a PR was merged more than 4 hours ago with no open PR and no recent activity, `cpm` dispatches anyway. The previous run may have failed.
 
 State is kept in `.cpm-state.json` (gitignored) to track dispatch counts per PR. See [CLAUDE.md](CLAUDE.md) for the full operational narrative.
 
 ## Troubleshooting
 
-**`cpm start` says "plist not found"** — Run `cpm init` first to generate the plist.
+**`cpm start` says "plist not found".** Run `cpm init` first to generate the plist.
 
-**`cpm doctor` says `gh auth: not authenticated`** — Run `gh auth login` and follow the prompts.
+**`cpm doctor` says `gh auth: not authenticated`.** Run `gh auth login` and follow the prompts.
 
-**"I created a routine but where's the Trigger ID?"** — Triggers are listed under your routine in Claude Code's UI. Depending on your Claude Code version, `claude trigger list` may also work from the CLI. The ID starts with `trig_`.
+**"I created a routine but where's the Trigger ID?"** Triggers are listed under your routine in Claude Code's UI. Depending on your Claude Code version, `claude trigger list` may also work from the CLI. The ID starts with `trig_`.
 
-**Routine fires but no PR appears** — Most often a permission prompt blocking the routine. `cpm` dispatches with `--dangerously-skip-permissions`, which should bypass interactive prompts, but a sandboxed environment can still block. Check `cpm logs` for the dispatch output and Claude Code's own logs for the routine's session.
+**Routine fires but no PR appears.** Most often a permission prompt blocking the routine. `cpm` dispatches with `--dangerously-skip-permissions`, which should bypass interactive prompts, but a sandboxed environment can still block. Check `cpm logs` for the dispatch output and Claude Code's own logs for the routine's session.
 
-**Same PR keeps re-dispatching** — `cpm` caps dispatches per merged PR at 3 attempts, spaced 2 hours apart. If you hit the cap, `cpm status` shows "Max retries hit for #N." Usually means the routine isn't producing a new branch — investigate the routine itself.
+**Same PR keeps re-dispatching.** `cpm` caps dispatches per merged PR at 3 attempts, spaced 2 hours apart. If you hit the cap, `cpm status` shows "Max retries hit for #N." Usually means the routine isn't producing a new branch, so investigate the routine itself.
 
-**Routine runs on the wrong branch** — Check `branch_prefix` in `projects.json`. The default is `claude/`. The routine must produce branches that match.
+**Routine runs on the wrong branch.** Check `branch_prefix` in `projects.json`. The default is `claude/`. The routine must produce branches that match.
 
-**How do I see what cpm decided last run?** — `cpm logs` tails the most recent daily log. Look for `[<name>] SKIP: ...` or `[<name>] DISPATCH: ...` lines.
+**How do I see what cpm decided last run?** `cpm logs` tails the most recent daily log. Look for `[<name>] SKIP: ...` or `[<name>] DISPATCH: ...` lines.
 
 ## Logs
 
 Logs live at `~/Library/Logs/claude-orchestrator/`:
 
-- `orchestrator-YYYY-MM-DD.log` — one per day, rotated after 14 days.
-- `launchd-stdout.log` / `launchd-stderr.log` — captured launchd output, truncated when over 1 MB.
+- `orchestrator-YYYY-MM-DD.log` is the daily run log, rotated after 14 days.
+- `launchd-stdout.log` / `launchd-stderr.log` capture launchd output, truncated when over 1 MB.
 
 ## Contributing
 
@@ -242,4 +242,4 @@ This repo dogfoods its own orchestrator. Significant changes are organized as ph
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).

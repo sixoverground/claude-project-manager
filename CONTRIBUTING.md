@@ -16,7 +16,7 @@ cpm dogfoods its own orchestrator. Significant changes are organized as phased p
 ## Submitting changes
 
 1. Fork and create a branch
-2. Make focused, single-purpose commits — explain the *why*, not just the *what*
+2. Make focused, single-purpose commits that explain the *why*, not just the *what*
 3. Update `README.md` or `CLAUDE.md` if behavior changes
 4. Open a PR with a clear description
 

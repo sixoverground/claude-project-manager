@@ -4,8 +4,8 @@ You are designing a phased implementation plan for this project. The plan will b
 
 ## Constraints
 
-- Each phase must be a single PR from a `claude/`-prefixed branch (e.g., `claude/auth-flow`, `claude/data-layer`). Some projects use `cpm/` instead — pick one and use it consistently.
-- Phases execute sequentially — phase N+1 only starts after phase N's PR is merged
+- Each phase must be a single PR from a `claude/`-prefixed branch (e.g., `claude/auth-flow`, `claude/data-layer`). Some projects use `cpm/` instead; pick one and use it consistently.
+- Phases execute sequentially: phase N+1 only starts after phase N's PR is merged
 - Each phase must be independently mergeable and leave the project in a working state
 - Each phase should be completable in a single Claude session (target: under 2 hours of work)
 - If a phase is too large, split it into sub-phases (e.g., `Phase 3a`, `Phase 3b`)
@@ -59,14 +59,14 @@ In the PR Sequence Table, add a **Repo** column:
 | 2 | `claude/metering-ios` | ios | 429 handling | Phase 1b | Pending |
 | 3 | `claude/tracking` | both | Shot status + reorder | Phase 2 | Pending |
 
-The orchestrator checks all repos in the group before dispatching — if any repo has an open PR or recent branch activity, the next phase is held.
+The orchestrator checks all repos in the group before dispatching: if any repo has an open PR or recent branch activity, the next phase is held.
 
 ## Guidelines for phase design
 
-- **Phase 0** should always be foundation/setup — dependencies, project config, base architecture
-- **Final phase** should be cleanup — remove legacy code, unused dependencies, final polish
+- **Phase 0** should always be foundation/setup: dependencies, project config, base architecture
+- **Final phase** should be cleanup: remove legacy code, unused dependencies, final polish
 - Group related work into the same phase (e.g., all auth screens together)
 - Avoid phases that touch the same files as other phases to minimize merge conflicts
 - Each phase's PR title should follow the format: `Phase N: Short Description`
-- Prefer many small phases over few large ones — a phase that takes multiple sessions will stall the pipeline
+- Prefer many small phases over few large ones: a phase that takes multiple sessions will stall the pipeline
 - Include CI/test setup early (Phase 0 or 1) so subsequent phases get automated validation

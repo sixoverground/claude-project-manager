@@ -258,7 +258,7 @@ cmd_run() {
 
     # Exception: merged > 4h ago + no open PR + no recent branch activity → dispatch anyway
     if [ "$best_hours_ago" -gt "$MERGE_WINDOW_HOURS" ]; then
-      log_to_file "[$name] DISPATCH (exception): PR #$best_merged_pr_num merged $best_time_ago, no open PR, no recent activity — previous run may have failed"
+      log_to_file "[$name] DISPATCH (exception): PR #$best_merged_pr_num merged $best_time_ago, no open PR, no recent activity (previous run may have failed)"
     fi
 
     # Step 4: Dispatch
@@ -701,7 +701,7 @@ cmd_new() {
   read "branch_prefix?Branch prefix [claude/]: "
 
   echo ""
-  echo "Step 1 — Write your phased plan."
+  echo "Step 1: Write your phased plan."
   echo ""
   echo "  In your project repo:"
   echo "    cpm prompt --copy"
@@ -712,7 +712,7 @@ cmd_new() {
   read "_ack?Press enter once the plan is committed (Ctrl-C to abort) "
 
   echo ""
-  echo "Step 2 — Create a Claude routine."
+  echo "Step 2: Create a Claude routine."
   echo ""
   echo "  In Claude Code (in your project repo), create a new routine with the"
   echo "  same prompt. Save it, then copy its Trigger ID."
