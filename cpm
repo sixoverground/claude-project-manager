@@ -96,6 +96,17 @@ state_record_dispatch() {
     "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
 }
 
+_render_plist() {
+  local user="$1" home="$2" brew_prefix="$3" project_dir="$4"
+  local tmpl="$PROJECT_DIR/templates/$PLIST_NAME.plist.tmpl"
+  local path_value="$brew_prefix/bin:$brew_prefix/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+  sed -e "s|{{USER}}|$user|g" \
+      -e "s|{{HOME}}|$home|g" \
+      -e "s|{{PROJECT_DIR}}|$project_dir|g" \
+      -e "s|{{PATH}}|$path_value|g" \
+      "$tmpl"
+}
+
 # --- Subcommand: run ---
 cmd_run() {
   # Lock guard
@@ -348,6 +359,59 @@ cmd_status() {
   echo ""
 }
 
+# --- Subcommand: init ---
+cmd_init() {
+  shift  # remove "init" from args
+  local force=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --force) force=true; shift ;;
+      *) echo "Unknown option: $1"; exit 1 ;;
+    esac
+  done
+
+  local user home brew_prefix
+  user="$(whoami)"
+  home="$HOME"
+  brew_prefix=$(brew --prefix 2>/dev/null || echo "/opt/homebrew")
+
+  echo "cpm init"
+
+  if [ ! -f "$PROJECTS_FILE" ]; then
+    echo '{"projects": []}' > "$PROJECTS_FILE"
+    echo "  [ok] created projects.json"
+  else
+    local count
+    count=$(jq '.projects | length' "$PROJECTS_FILE" 2>/dev/null || echo "?")
+    echo "  [skip] projects.json exists ($count projects)"
+  fi
+
+  local tmpl="$PROJECT_DIR/templates/$PLIST_NAME.plist.tmpl"
+  if [ ! -f "$tmpl" ]; then
+    echo "  [fail] plist template not found at $tmpl"
+    exit 1
+  fi
+  if [ -f "$PLIST_SRC" ] && [ "$force" != "true" ]; then
+    echo "  [skip] plist exists at $PLIST_SRC (use --force to regenerate)"
+  else
+    _render_plist "$user" "$home" "$brew_prefix" "$PROJECT_DIR" > "$PLIST_SRC"
+    echo "  [ok] generated $PLIST_SRC"
+  fi
+
+  if ! command -v cpm &>/dev/null; then
+    echo "  [warn] cpm is not on \$PATH"
+    echo "         Optional: ln -s \"$PROJECT_DIR/cpm\" $brew_prefix/bin/cpm"
+  else
+    echo "  [ok] cpm on \$PATH"
+  fi
+
+  echo ""
+  echo "Next steps:"
+  echo "  1. cpm doctor       # verify gh / jq / claude are installed and authenticated"
+  echo "  2. cpm new <name>   # walk through setup for your first project"
+  echo "  3. cpm start        # enable the 30-min launchd scheduler"
+}
+
 # --- Subcommand: start ---
 cmd_start() {
   if ! [ -f "$PLIST_SRC" ]; then
@@ -554,6 +618,7 @@ cmd_trigger() {
 
 # --- Main ---
 case "${1:-help}" in
+  init)   cmd_init "$@" ;;
   run)    cmd_run ;;
   status) cmd_status ;;
   start)  cmd_start ;;
@@ -566,6 +631,9 @@ case "${1:-help}" in
   trigger) cmd_trigger "$@" ;;
   help|--help|-h)
     echo "Usage: cpm <command>"
+    echo ""
+    echo "Setup:"
+    echo "  init     Generate plist + empty projects.json (one-time setup)"
     echo ""
     echo "Commands:"
     echo "  run      Execute the orchestrator once"
