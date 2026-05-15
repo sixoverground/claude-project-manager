@@ -12,7 +12,10 @@ LOG_DIR="$HOME/Library/Logs/claude-orchestrator"
 LOCK_FILE="/tmp/claude-orchestrator.lock"
 MERGE_WINDOW_HOURS=4
 ACTIVITY_WINDOW_HOURS=2
+DISPATCH_COOLDOWN_HOURS=2
+DISPATCH_MAX_RETRIES=3
 DEFAULT_BRANCH_PREFIX="claude/"
+STATE_FILE="$PROJECT_DIR/.cpm-state.json"
 
 # Ensure PATH includes required binaries (critical for launchd)
 export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$HOME/.nvm/versions/node/v24.14.0/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -63,6 +66,34 @@ cleanup_logs() {
       fi
     done
   fi
+}
+
+ensure_state_file() {
+  [ -f "$STATE_FILE" ] || echo '{}' > "$STATE_FILE"
+}
+
+state_get() {
+  local name="$1" field="$2"
+  ensure_state_file
+  jq -r --arg n "$name" --arg f "$field" '.[$n][$f] // empty' "$STATE_FILE"
+}
+
+state_record_dispatch() {
+  local name="$1" pr_key="$2"
+  ensure_state_file
+  local prev_pr prev_count new_count
+  prev_pr=$(state_get "$name" "last_dispatched_for_pr")
+  prev_count=$(state_get "$name" "dispatch_count")
+  new_count=1
+  if [ "$prev_pr" = "$pr_key" ] && [ -n "$prev_count" ]; then
+    new_count=$((prev_count + 1))
+  fi
+  local now tmp
+  now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  tmp="$STATE_FILE.tmp"
+  jq --arg n "$name" --arg pr "$pr_key" --arg ts "$now" --argjson count "$new_count" \
+    '.[$n] = {last_dispatched_for_pr: $pr, last_dispatched_at: $ts, dispatch_count: $count}' \
+    "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
 }
 
 # --- Subcommand: run ---
@@ -151,7 +182,13 @@ cmd_run() {
       fi
 
       # Step 3: Guard against active sessions
-      last_activity=$(gh api "repos/$repo/branches" --jq "[.[] | select(.name | startswith(\"$branch_prefix\"))] | sort_by(.commit.committer.date) | last | .commit.committer.date" 2>/dev/null || echo "")
+      # /repos/X/branches doesn't return committer.date, so use the GraphQL refs API instead.
+      local owner_name="${repo%%/*}"
+      local repo_short="${repo##*/}"
+      last_activity=$(gh api graphql \
+        -f query='query($owner: String!, $repo: String!, $prefix: String!) { repository(owner: $owner, name: $repo) { refs(refPrefix: $prefix, first: 100) { nodes { target { ... on Commit { committedDate } } } } } }' \
+        -F owner="$owner_name" -F repo="$repo_short" -F prefix="refs/heads/$branch_prefix" \
+        --jq '[.data.repository.refs.nodes[].target.committedDate] | sort | last' 2>/dev/null || echo "")
 
       if [ -n "$last_activity" ] && [ "$last_activity" != "null" ]; then
         activity_hours=$(hours_since "$last_activity")
@@ -180,6 +217,34 @@ cmd_run() {
 
     local best_time_ago=$(time_ago "$best_merged_at")
 
+    # Dispatch dedup: each merged PR gets at most DISPATCH_MAX_RETRIES dispatches,
+    # spaced by DISPATCH_COOLDOWN_HOURS. Prevents runaway dispatches when the
+    # trigger can't open a PR quickly enough for the open-PR / activity guards.
+    local pr_key="${best_merged_repo}#${best_merged_pr_num}"
+    local prev_pr prev_at prev_count
+    prev_pr=$(state_get "$name" "last_dispatched_for_pr")
+    prev_at=$(state_get "$name" "last_dispatched_at")
+    prev_count=$(state_get "$name" "dispatch_count")
+
+    if [ "$prev_pr" = "$pr_key" ]; then
+      if [ "${prev_count:-0}" -ge "$DISPATCH_MAX_RETRIES" ]; then
+        log_to_file "[$name] SKIP: max retries ($DISPATCH_MAX_RETRIES) reached for $pr_key"
+        summary_rows+=("| $name | merged $best_time_ago | SKIP | Max retries hit for #$best_merged_pr_num |")
+        continue
+      fi
+      if [ -n "$prev_at" ]; then
+        local cooldown_hours
+        cooldown_hours=$(hours_since "$prev_at")
+        if [ "$cooldown_hours" -lt "$DISPATCH_COOLDOWN_HOURS" ]; then
+          local cooldown_ago
+          cooldown_ago=$(time_ago "$prev_at")
+          log_to_file "[$name] SKIP: dispatched $cooldown_ago (cooldown ${DISPATCH_COOLDOWN_HOURS}h)"
+          summary_rows+=("| $name | merged $best_time_ago | SKIP | Dispatched $cooldown_ago, cooling |")
+          continue
+        fi
+      fi
+    fi
+
     # Exception: merged > 4h ago + no open PR + no recent branch activity → dispatch anyway
     if [ "$best_hours_ago" -gt "$MERGE_WINDOW_HOURS" ]; then
       log_to_file "[$name] DISPATCH (exception): PR #$best_merged_pr_num merged $best_time_ago, no open PR, no recent activity — previous run may have failed"
@@ -197,6 +262,7 @@ cmd_run() {
       2>&1) || true
 
     log_to_file "[$name] Dispatch output: $dispatch_output"
+    state_record_dispatch "$name" "$pr_key"
     summary_rows+=("| $name | merged $best_time_ago | DISPATCH | $best_merged_branch merged, starting next |")
 
   done <<< "$projects"
@@ -419,6 +485,41 @@ cmd_remove() {
   echo "Removed project '$name'"
 }
 
+# --- Subcommand: pause / resume ---
+_set_paused() {
+  local name="$1" value="$2"
+
+  if ! jq -e --arg n "$name" '.projects[] | select(.name == $n)' "$PROJECTS_FILE" >/dev/null 2>&1; then
+    echo "Error: project '$name' not found"
+    exit 1
+  fi
+
+  jq --arg n "$name" --argjson v "$value" \
+    '(.projects[] | select(.name == $n) | .paused) = $v' \
+    "$PROJECTS_FILE" > "$PROJECTS_FILE.tmp" \
+    && mv "$PROJECTS_FILE.tmp" "$PROJECTS_FILE"
+}
+
+cmd_pause() {
+  local name="${2:-}"
+  if [ -z "$name" ]; then
+    echo "Usage: cpm pause <name>"
+    exit 1
+  fi
+  _set_paused "$name" "true"
+  echo "Paused '$name'"
+}
+
+cmd_resume() {
+  local name="${2:-}"
+  if [ -z "$name" ]; then
+    echo "Usage: cpm resume <name>"
+    exit 1
+  fi
+  _set_paused "$name" "false"
+  echo "Resumed '$name'"
+}
+
 # --- Subcommand: trigger ---
 cmd_trigger() {
   local name="${2:-}"
@@ -460,6 +561,8 @@ case "${1:-help}" in
   logs)   cmd_logs ;;
   add)    cmd_add "$@" ;;
   remove) cmd_remove "$@" ;;
+  pause)  cmd_pause "$@" ;;
+  resume) cmd_resume "$@" ;;
   trigger) cmd_trigger "$@" ;;
   help|--help|-h)
     echo "Usage: cpm <command>"
@@ -472,6 +575,8 @@ case "${1:-help}" in
     echo "  logs     Tail recent orchestrator logs"
     echo "  add      Add a project to the registry"
     echo "  remove   Remove a project from the registry"
+    echo "  pause    Pause a project (skip during orchestrator runs)"
+    echo "  resume   Resume a paused project"
     echo "  trigger  Manually dispatch a project's routine"
     echo ""
     echo "Add usage:"
