@@ -504,6 +504,39 @@ cmd_doctor() {
   fi
 }
 
+# --- Subcommand: prompt ---
+cmd_prompt() {
+  shift  # remove "prompt" from args
+  local prompt_file="$PROJECT_DIR/prompts/routine.md"
+  local copy=false save=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --copy) copy=true; shift ;;
+      --save) save="$2"; shift 2 ;;
+      *) echo "Unknown option: $1"; exit 1 ;;
+    esac
+  done
+
+  if [ ! -f "$prompt_file" ]; then
+    echo "Error: prompt file not found at $prompt_file"
+    exit 1
+  fi
+
+  if [ "$copy" = true ]; then
+    if ! command -v pbcopy &>/dev/null; then
+      echo "Error: pbcopy not available (macOS only)"
+      exit 1
+    fi
+    pbcopy < "$prompt_file"
+    echo "Copied $prompt_file to clipboard ($(wc -l < "$prompt_file" | tr -d ' ') lines)"
+  elif [ -n "$save" ]; then
+    cp "$prompt_file" "$save"
+    echo "Saved to $save"
+  else
+    cat "$prompt_file"
+  fi
+}
+
 # --- Subcommand: start ---
 cmd_start() {
   if ! [ -f "$PLIST_SRC" ]; then
@@ -712,6 +745,7 @@ cmd_trigger() {
 case "${1:-help}" in
   init)   cmd_init "$@" ;;
   doctor) cmd_doctor ;;
+  prompt) cmd_prompt "$@" ;;
   run)    cmd_run ;;
   status) cmd_status ;;
   start)  cmd_start ;;
@@ -740,6 +774,7 @@ case "${1:-help}" in
     echo "  pause    Pause a project (skip during orchestrator runs)"
     echo "  resume   Resume a paused project"
     echo "  trigger  Manually dispatch a project's routine"
+    echo "  prompt   Print the routine prompt (use with --copy or --save)"
     echo ""
     echo "Add usage:"
     echo "  cpm add --name <name> --repo <owner/repo> [--repo <owner/repo>] --trigger <trigger_id> [--prefix <branch_prefix>]"
