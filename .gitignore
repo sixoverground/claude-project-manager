@@ -1,4 +1,4 @@
 .claude
 projects.json
-claude-project-manager.plist
+*.plist
 .cpm-state.json
