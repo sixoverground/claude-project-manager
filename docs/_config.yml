@@ -1,0 +1,13 @@
+title: Claude Project Manager
+description: A local macOS scheduler that polls GitHub and fires Claude Code routines as soon as phase PRs merge, so a phased implementation plan can advance autonomously while you're away.
+theme: jekyll-theme-cayman
+url: https://claudeprojectmanager.com
+github:
+  repository_url: https://github.com/sixoverground/claude-project-manager
+  is_project_page: true
+  zip_url: https://github.com/sixoverground/claude-project-manager/archive/refs/heads/main.zip
+  tar_url: https://github.com/sixoverground/claude-project-manager/archive/refs/heads/main.tar.gz
+
+# Cayman's header shows site.title + site.description; the rendered page
+# content is just the body of index.md.
+show_downloads: false
