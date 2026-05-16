@@ -1,0 +1,22 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Note: shellcheck doesn't support zsh, and cpm relies on several zsh-only
+# constructs (read "var?prompt", parameter splitting with (@s: :), etc.).
+# Linting is therefore restricted to runtime behavior via bats.
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: brew install bats-core jq
+
+      - name: Bats
+        run: bats tests/
