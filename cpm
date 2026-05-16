@@ -668,12 +668,19 @@ cmd_add() {
   local result
   result=$(_append_project_to_registry "$name" "$trigger_id" "$branch_prefix" "${repos[@]}") || exit 1
 
-  echo "Added project '$name'"
+  echo "Added project: $name"
   echo "$result" | jq .
-
   echo ""
+  echo "'$name' is the project name. Use it for future cpm commands:"
+  echo "  cpm trigger $name    # manually dispatch the routine"
+  echo "  cpm pause $name      # skip this project during runs"
+  echo "  cpm resume $name     # un-pause"
+  echo "  cpm remove $name     # remove from the registry"
+  echo "  cpm status           # see all projects' state"
+  echo ""
+
   local kickoff=""
-  read "kickoff?Kickoff phase 0 now? [Y/n]: "
+  read "kickoff?Kickoff phase 0 for $name now? [Y/n]: "
   if [[ -z "$kickoff" || "$kickoff" =~ ^[Yy] ]]; then
     _dispatch_routine "$name" "$trigger_id"
   fi

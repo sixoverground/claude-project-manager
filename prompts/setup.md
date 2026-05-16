@@ -89,6 +89,9 @@ Print the command for the user to copy and paste in their terminal. Fill in ever
 cpm add --name <PROJECT_NAME> --repo <REPO_1> [--repo <REPO_2>...] --trigger <TRIGGER_ID>
 ```
 
-After running that command, cpm asks if they want to kickoff phase 0 right away. Mention this to the user.
+Then tell the user, in your own words:
+
+- `<PROJECT_NAME>` (the actual name you chose for them in Step 1) is the handle they will use for every future cpm command: `cpm trigger <name>`, `cpm pause <name>`, `cpm resume <name>`, `cpm remove <name>`. Make sure they notice and remember it.
+- After running `cpm add`, cpm will ask whether to kickoff phase 0 right now. Y dispatches the routine immediately. N skips, and the user can run `cpm trigger <PROJECT_NAME>` later when they're ready.
 
 That's it. After Step 6 your job is done. If the user has follow-up questions about cpm itself, defer to `cpm help` and the README in the cpm repo.
