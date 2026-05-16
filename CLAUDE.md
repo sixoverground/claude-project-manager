@@ -79,10 +79,10 @@ After checking all projects, print a table:
 ```
 | Project              | Status    | Action   | Reason                          |
 |----------------------|-----------|----------|---------------------------------|
-| linkmyphotos-ios     | merged 2h | DISPATCH | Phase 5 merged, starting next   |
-| linkmyphotos-android | open PR   | SKIP     | PR #23 in progress              |
-| linkmyphotos-rails   | no merge  | SKIP     | No recent merges                |
-| daykeeper-nextjs     | paused    | SKIP     | Project paused                  |
+| acme-ios             | merged 2h | DISPATCH | Phase 5 merged, starting next   |
+| acme-android         | open PR   | SKIP     | PR #23 in progress              |
+| acme-rails           | no merge  | SKIP     | No recent merges                |
+| widget-nextjs        | paused    | SKIP     | Project paused                  |
 ```
 
 ## Why local
