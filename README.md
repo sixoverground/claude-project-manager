@@ -42,10 +42,7 @@ Four concepts you need to know:
 ## Quick start (5 minutes)
 
 ```bash
-git clone git@github.com:sixoverground/claude-project-manager.git
-cd claude-project-manager
-chmod +x cpm
-ln -s "$(pwd)/cpm" /opt/homebrew/bin/cpm   # optional: put cpm on PATH
+brew install sixoverground/tap/cpm
 
 cpm init        # check deps, generate plist + empty projects.json, offer to start the scheduler
 cpm new         # copy the new-project setup prompt to your clipboard
@@ -54,6 +51,32 @@ cpm new         # copy the new-project setup prompt to your clipboard
 Then paste that prompt into Claude Code in your project repo. Claude does the rest and tells you the exact `cpm add` command to run when it's done. See [Set up your first project](#set-up-your-first-project) for the full walkthrough.
 
 `cpm init` is idempotent and safe to re-run. It won't overwrite your `projects.json` and won't regenerate the plist unless you pass `--force`.
+
+### File layout
+
+After installation:
+
+- **Bundled assets** (templates, prompts) live under `$(brew --prefix)/share/cpm/` (typically `/opt/homebrew/share/cpm/`). `brew upgrade cpm` rewrites these.
+- **Your data** lives under `~/.cpm/`: `projects.json`, the rendered launchd plist, and `.cpm-state.json`. Brew never touches this directory.
+- **Logs** live under `~/Library/Logs/claude-project-manager/`.
+- **The launchd plist** is installed to `~/Library/LaunchAgents/claude-project-manager.plist` by `cpm start`.
+
+You can override `CPM_SHARE` and `CPM_DATA` via environment variables if you want non-default locations (mostly useful when developing cpm itself).
+
+### Develop in-tree
+
+If you'd rather hack on cpm directly instead of installing via brew:
+
+```bash
+git clone git@github.com:sixoverground/claude-project-manager.git
+cd claude-project-manager
+chmod +x cpm
+ln -s "$(pwd)/cpm" /opt/homebrew/bin/cpm   # optional: put cpm on PATH
+
+cpm init   # auto-detects the in-tree templates/ and prompts/ as CPM_SHARE
+```
+
+In dev mode, `CPM_SHARE` is set to the cloned repo automatically. `CPM_DATA` still defaults to `~/.cpm/` so you're working against the same project registry you'd use under a brew install.
 
 ## Concepts
 

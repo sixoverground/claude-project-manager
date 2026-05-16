@@ -3,10 +3,35 @@ set -euo pipefail
 
 # --- Config ---
 SCRIPT_PATH="${0:A}"
-PROJECT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
-PROJECTS_FILE="$PROJECT_DIR/projects.json"
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+
+# CPM_SHARE: read-only bundled assets (templates/, prompts/).
+# In-tree dev: SCRIPT_DIR has templates/ and prompts/ as siblings.
+# Brew install: $(brew --prefix)/share/cpm. Fall back to common Homebrew prefixes.
+if [ -d "$SCRIPT_DIR/templates" ] && [ -d "$SCRIPT_DIR/prompts" ]; then
+  CPM_SHARE="${CPM_SHARE:-$SCRIPT_DIR}"
+else
+  _brew_prefix="$(brew --prefix 2>/dev/null || echo "")"
+  if [ -n "$_brew_prefix" ] && [ -d "$_brew_prefix/share/cpm" ]; then
+    CPM_SHARE="${CPM_SHARE:-$_brew_prefix/share/cpm}"
+  elif [ -d "/opt/homebrew/share/cpm" ]; then
+    CPM_SHARE="${CPM_SHARE:-/opt/homebrew/share/cpm}"
+  elif [ -d "/usr/local/share/cpm" ]; then
+    CPM_SHARE="${CPM_SHARE:-/usr/local/share/cpm}"
+  else
+    CPM_SHARE="${CPM_SHARE:-$SCRIPT_DIR}"  # final fallback; will error later if assets missing
+  fi
+  unset _brew_prefix
+fi
+
+# CPM_DATA: user-writable state (projects.json, rendered plist, .cpm-state.json).
+CPM_DATA="${CPM_DATA:-$HOME/.cpm}"
+mkdir -p "$CPM_DATA"
+
+PROJECTS_FILE="$CPM_DATA/projects.json"
+STATE_FILE="$CPM_DATA/.cpm-state.json"
 PLIST_NAME="claude-project-manager"
-PLIST_SRC="$PROJECT_DIR/$PLIST_NAME.plist"
+PLIST_SRC="$CPM_DATA/$PLIST_NAME.plist"
 PLIST_DST="$HOME/Library/LaunchAgents/$PLIST_NAME.plist"
 LOG_DIR="$HOME/Library/Logs/claude-project-manager"
 LOCK_FILE="/tmp/claude-project-manager.lock"
@@ -15,7 +40,6 @@ ACTIVITY_WINDOW_HOURS=2
 DISPATCH_COOLDOWN_HOURS=2
 DISPATCH_MAX_RETRIES=3
 DEFAULT_BRANCH_PREFIX="claude/"
-STATE_FILE="$PROJECT_DIR/.cpm-state.json"
 
 # Ensure PATH includes required binaries (critical for launchd)
 export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$HOME/.nvm/versions/node/v24.14.0/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -97,12 +121,13 @@ state_record_dispatch() {
 }
 
 _render_plist() {
-  local user="$1" home="$2" brew_prefix="$3" project_dir="$4"
-  local tmpl="$PROJECT_DIR/templates/$PLIST_NAME.plist.tmpl"
+  local user="$1" home="$2" brew_prefix="$3" cpm_bin="$4" cpm_data="$5"
+  local tmpl="$CPM_SHARE/templates/$PLIST_NAME.plist.tmpl"
   local path_value="$brew_prefix/bin:$brew_prefix/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
   sed -e "s|{{USER}}|$user|g" \
       -e "s|{{HOME}}|$home|g" \
-      -e "s|{{PROJECT_DIR}}|$project_dir|g" \
+      -e "s|{{CPM_BIN}}|$cpm_bin|g" \
+      -e "s|{{CPM_DATA}}|$cpm_data|g" \
       -e "s|{{PATH}}|$path_value|g" \
       "$tmpl"
 }
@@ -392,7 +417,7 @@ cmd_init() {
     echo "  [skip] projects.json exists ($count projects)"
   fi
 
-  local tmpl="$PROJECT_DIR/templates/$PLIST_NAME.plist.tmpl"
+  local tmpl="$CPM_SHARE/templates/$PLIST_NAME.plist.tmpl"
   if [ ! -f "$tmpl" ]; then
     echo "  [fail] plist template not found at $tmpl"
     exit 1
@@ -400,13 +425,13 @@ cmd_init() {
   if [ -f "$PLIST_SRC" ] && [ "$force" != "true" ]; then
     echo "  [skip] plist exists at $PLIST_SRC (use --force to regenerate)"
   else
-    _render_plist "$user" "$home" "$brew_prefix" "$PROJECT_DIR" > "$PLIST_SRC"
+    _render_plist "$user" "$home" "$brew_prefix" "$SCRIPT_PATH" "$CPM_DATA" > "$PLIST_SRC"
     echo "  [ok] generated $PLIST_SRC"
   fi
 
   if ! command -v cpm &>/dev/null; then
     echo "  [warn] cpm is not on \$PATH"
-    echo "         Optional: ln -s \"$PROJECT_DIR/cpm\" $brew_prefix/bin/cpm"
+    echo "         Optional: ln -s \"$SCRIPT_PATH\" $brew_prefix/bin/cpm"
   else
     echo "  [ok] cpm on \$PATH"
   fi
@@ -512,7 +537,7 @@ cmd_doctor() {
   if command -v cpm &>/dev/null; then
     echo "  [ok]   cpm on PATH:   yes"
   else
-    echo "  [warn] cpm on PATH:   no (optional: ln -s \"$PROJECT_DIR/cpm\" /opt/homebrew/bin/cpm)"
+    echo "  [warn] cpm on PATH:   no (optional: ln -s \"$SCRIPT_PATH\" /opt/homebrew/bin/cpm)"
   fi
 
   if [ -f "$PROJECTS_FILE" ] && jq -e '.projects' "$PROJECTS_FILE" &>/dev/null; then
@@ -688,7 +713,7 @@ cmd_add() {
 
 # --- Subcommand: new ---
 cmd_new() {
-  local prompt_file="$PROJECT_DIR/prompts/setup.md"
+  local prompt_file="$CPM_SHARE/prompts/setup.md"
   if [ ! -f "$prompt_file" ]; then
     echo "Error: setup prompt not found at $prompt_file"
     exit 1
