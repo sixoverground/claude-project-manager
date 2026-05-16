@@ -1,7 +1,7 @@
 ---
 layout: default
 image:
-  path: /assets/og-image.png
+  path: /assets/og-image.png?v=1
   height: 630
   width: 1200
 ---
