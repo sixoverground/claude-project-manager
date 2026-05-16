@@ -1,0 +1,8 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <rect width="512" height="512" rx="96" fill="#151515"/>
+  <!-- four phase bars, progressively more visible -->
+  <rect x="112" y="128" width="288" height="48" rx="8" fill="#b5e853" opacity="0.25"/>
+  <rect x="112" y="200" width="288" height="48" rx="8" fill="#b5e853" opacity="0.50"/>
+  <rect x="112" y="272" width="288" height="48" rx="8" fill="#b5e853" opacity="0.75"/>
+  <rect x="112" y="344" width="288" height="48" rx="8" fill="#b5e853"/>
+</svg>
