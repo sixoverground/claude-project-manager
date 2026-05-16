@@ -1,5 +1,9 @@
 ---
 layout: default
+image:
+  path: /assets/og-image.png
+  height: 630
+  width: 1200
 ---
 
 ```
