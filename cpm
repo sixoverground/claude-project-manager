@@ -96,47 +96,6 @@ state_record_dispatch() {
     "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
 }
 
-_check_legacy_artifacts() {
-  local legacy_name="com.sixoverground.claude-orchestrator"
-  local legacy_plist_dst="$HOME/Library/LaunchAgents/$legacy_name.plist"
-  local legacy_plist_src="$PROJECT_DIR/$legacy_name.plist"
-  local legacy_log_dir="$HOME/Library/Logs/claude-orchestrator"
-  local legacy_lock="/tmp/claude-orchestrator.lock"
-
-  if [ ! -f "$legacy_plist_dst" ] && [ ! -f "$legacy_plist_src" ] && [ ! -d "$legacy_log_dir" ] && [ ! -f "$legacy_lock" ]; then
-    return 0
-  fi
-
-  echo ""
-  echo "Detected legacy 'claude-orchestrator' artifacts from before the rename:"
-  [ -f "$legacy_plist_dst" ] && echo "  - $legacy_plist_dst (loaded launchd job)"
-  [ -f "$legacy_plist_src" ] && echo "  - $legacy_plist_src (rendered plist)"
-  [ -d "$legacy_log_dir" ] && echo "  - $legacy_log_dir (log directory)"
-  [ -f "$legacy_lock" ] && echo "  - $legacy_lock (stale lock file)"
-  echo ""
-  local migrate=""
-  read "migrate?Clean these up now? [Y/n]: "
-  if [[ -z "$migrate" || "$migrate" =~ ^[Yy] ]]; then
-    if [ -f "$legacy_plist_dst" ]; then
-      launchctl unload "$legacy_plist_dst" 2>/dev/null || true
-      rm -f "$legacy_plist_dst"
-      echo "  [ok] unloaded and removed $legacy_plist_dst"
-    fi
-    if [ -f "$legacy_plist_src" ]; then
-      rm -f "$legacy_plist_src"
-      echo "  [ok] removed $legacy_plist_src"
-    fi
-    if [ -f "$legacy_lock" ]; then
-      rm -f "$legacy_lock"
-      echo "  [ok] removed $legacy_lock"
-    fi
-    if [ -d "$legacy_log_dir" ]; then
-      echo "  [skip] kept $legacy_log_dir (log history). Remove manually if desired: rm -rf \"$legacy_log_dir\""
-    fi
-    echo ""
-  fi
-}
-
 _render_plist() {
   local user="$1" home="$2" brew_prefix="$3" project_dir="$4"
   local tmpl="$PROJECT_DIR/templates/$PLIST_NAME.plist.tmpl"
@@ -417,8 +376,6 @@ cmd_init() {
   brew_prefix=$(brew --prefix 2>/dev/null || echo "/opt/homebrew")
 
   echo "cpm init"
-
-  _check_legacy_artifacts
 
   local dep_fails=0
   _run_dep_checks || dep_fails=$?
