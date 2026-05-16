@@ -56,7 +56,7 @@ Then paste that prompt into Claude Code in your project repo. Claude does the re
 
 After installation:
 
-- **Bundled assets** (templates, prompts) live under `$(brew --prefix)/share/cpm/` (typically `/opt/homebrew/share/cpm/`). `brew upgrade cpm` rewrites these.
+- **Bundled assets** (templates, prompts) live under `$(brew --prefix)/share/claude-project-manager/` (typically `/opt/homebrew/share/claude-project-manager/`). `brew upgrade claude-project-manager` rewrites these.
 - **Your data** lives under `~/.cpm/`: `projects.json`, the rendered launchd plist, and `.cpm-state.json`. Brew never touches this directory.
 - **Logs** live under `~/Library/Logs/claude-project-manager/`.
 - **The launchd plist** is installed to `~/Library/LaunchAgents/claude-project-manager.plist` by `cpm start`.
