@@ -42,7 +42,7 @@ Four concepts you need to know:
 ## Quick start (5 minutes)
 
 ```bash
-brew install sixoverground/tap/cpm
+brew install sixoverground/tap/claude-project-manager
 
 cpm init        # check deps, generate plist + empty projects.json, offer to start the scheduler
 cpm new         # copy the new-project setup prompt to your clipboard
