@@ -788,6 +788,12 @@ cmd_trigger() {
 }
 
 # --- Main ---
+# Tests source this file to call functions directly. Skip the dispatcher when
+# CPM_SOURCE_ONLY is set.
+if [ -n "${CPM_SOURCE_ONLY:-}" ]; then
+  return 0 2>/dev/null || exit 0
+fi
+
 case "${1:-help}" in
   init)   cmd_init "$@" ;;
   doctor) cmd_doctor ;;
