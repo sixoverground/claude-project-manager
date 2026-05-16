@@ -5,11 +5,11 @@ set -euo pipefail
 SCRIPT_PATH="${0:A}"
 PROJECT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 PROJECTS_FILE="$PROJECT_DIR/projects.json"
-PLIST_NAME="com.sixoverground.claude-orchestrator"
+PLIST_NAME="com.sixoverground.claude-project-manager"
 PLIST_SRC="$PROJECT_DIR/$PLIST_NAME.plist"
 PLIST_DST="$HOME/Library/LaunchAgents/$PLIST_NAME.plist"
-LOG_DIR="$HOME/Library/Logs/claude-orchestrator"
-LOCK_FILE="/tmp/claude-orchestrator.lock"
+LOG_DIR="$HOME/Library/Logs/claude-project-manager"
+LOCK_FILE="/tmp/claude-project-manager.lock"
 MERGE_WINDOW_HOURS=4
 ACTIVITY_WINDOW_HOURS=2
 DISPATCH_COOLDOWN_HOURS=2
@@ -27,7 +27,7 @@ log() {
 
 log_to_file() {
   mkdir -p "$LOG_DIR"
-  local logfile="$LOG_DIR/orchestrator-$(date +%Y-%m-%d).log"
+  local logfile="$LOG_DIR/cpm-$(date +%Y-%m-%d).log"
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$logfile"
 }
 
@@ -59,7 +59,7 @@ time_ago() {
 
 cleanup_logs() {
   if [ -d "$LOG_DIR" ]; then
-    find "$LOG_DIR" -name "orchestrator-*.log" -mtime +14 -delete 2>/dev/null || true
+    find "$LOG_DIR" -name "cpm-*.log" -mtime +14 -delete 2>/dev/null || true
     for f in "$LOG_DIR/launchd-stdout.log" "$LOG_DIR/launchd-stderr.log"; do
       if [ -f "$f" ] && [ $(stat -f%z "$f" 2>/dev/null || echo 0) -gt 1048576 ]; then
         tail -1000 "$f" > "$f.tmp" && mv "$f.tmp" "$f"
@@ -94,6 +94,47 @@ state_record_dispatch() {
   jq --arg n "$name" --arg pr "$pr_key" --arg ts "$now" --argjson count "$new_count" \
     '.[$n] = {last_dispatched_for_pr: $pr, last_dispatched_at: $ts, dispatch_count: $count}' \
     "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+}
+
+_check_legacy_artifacts() {
+  local legacy_name="com.sixoverground.claude-orchestrator"
+  local legacy_plist_dst="$HOME/Library/LaunchAgents/$legacy_name.plist"
+  local legacy_plist_src="$PROJECT_DIR/$legacy_name.plist"
+  local legacy_log_dir="$HOME/Library/Logs/claude-orchestrator"
+  local legacy_lock="/tmp/claude-orchestrator.lock"
+
+  if [ ! -f "$legacy_plist_dst" ] && [ ! -f "$legacy_plist_src" ] && [ ! -d "$legacy_log_dir" ] && [ ! -f "$legacy_lock" ]; then
+    return 0
+  fi
+
+  echo ""
+  echo "Detected legacy 'claude-orchestrator' artifacts from before the rename:"
+  [ -f "$legacy_plist_dst" ] && echo "  - $legacy_plist_dst (loaded launchd job)"
+  [ -f "$legacy_plist_src" ] && echo "  - $legacy_plist_src (rendered plist)"
+  [ -d "$legacy_log_dir" ] && echo "  - $legacy_log_dir (log directory)"
+  [ -f "$legacy_lock" ] && echo "  - $legacy_lock (stale lock file)"
+  echo ""
+  local migrate=""
+  read "migrate?Clean these up now? [Y/n]: "
+  if [[ -z "$migrate" || "$migrate" =~ ^[Yy] ]]; then
+    if [ -f "$legacy_plist_dst" ]; then
+      launchctl unload "$legacy_plist_dst" 2>/dev/null || true
+      rm -f "$legacy_plist_dst"
+      echo "  [ok] unloaded and removed $legacy_plist_dst"
+    fi
+    if [ -f "$legacy_plist_src" ]; then
+      rm -f "$legacy_plist_src"
+      echo "  [ok] removed $legacy_plist_src"
+    fi
+    if [ -f "$legacy_lock" ]; then
+      rm -f "$legacy_lock"
+      echo "  [ok] removed $legacy_lock"
+    fi
+    if [ -d "$legacy_log_dir" ]; then
+      echo "  [skip] kept $legacy_log_dir (log history). Remove manually if desired: rm -rf \"$legacy_log_dir\""
+    fi
+    echo ""
+  fi
 }
 
 _render_plist() {
@@ -377,6 +418,8 @@ cmd_init() {
 
   echo "cpm init"
 
+  _check_legacy_artifacts
+
   local dep_fails=0
   _run_dep_checks || dep_fails=$?
   if [ "$dep_fails" -gt 0 ]; then
@@ -569,7 +612,7 @@ cmd_stop() {
 cmd_logs() {
   mkdir -p "$LOG_DIR"
   local latest
-  latest=$(ls -t "$LOG_DIR"/orchestrator-*.log 2>/dev/null | head -1)
+  latest=$(ls -t "$LOG_DIR"/cpm-*.log 2>/dev/null | head -1)
 
   if [ -z "$latest" ]; then
     echo "No log files found in $LOG_DIR"

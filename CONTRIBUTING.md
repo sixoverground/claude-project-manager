@@ -25,5 +25,5 @@ cpm dogfoods itself. Significant changes are organized as phased plans and shipp
 Include:
 - macOS version
 - Output of `cpm doctor`
-- Relevant log excerpts from `~/Library/Logs/claude-orchestrator/` (the log directory uses the legacy `claude-orchestrator` identifier)
+- Relevant log excerpts from `~/Library/Logs/claude-project-manager/`
 - The `projects.json` entry (with trigger IDs redacted)

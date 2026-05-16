@@ -1,4 +1,4 @@
 .claude
 projects.json
-com.sixoverground.claude-orchestrator.plist
+com.sixoverground.*.plist
 .cpm-state.json
