@@ -220,7 +220,7 @@ State is kept in `.cpm-state.json` (gitignored) to track dispatch counts per PR.
 
 Logs live at `~/Library/Logs/claude-project-manager/`:
 
-- `orchestrator-YYYY-MM-DD.log` is the daily run log, rotated after 14 days.
+- `cpm-YYYY-MM-DD.log` is the daily run log, rotated after 14 days.
 - `launchd-stdout.log` / `launchd-stderr.log` capture launchd output, truncated when over 1 MB.
 
 ## Contributing
