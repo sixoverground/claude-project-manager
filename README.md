@@ -71,7 +71,7 @@ If you'd rather hack on cpm directly instead of installing via brew:
 git clone git@github.com:sixoverground/claude-project-manager.git
 cd claude-project-manager
 chmod +x cpm
-ln -s "$(pwd)/cpm" /opt/homebrew/bin/cpm   # optional: put cpm on PATH
+ln -s "$(pwd)/cpm" "$(brew --prefix)/bin/cpm"   # optional: put cpm on PATH
 
 cpm init   # auto-detects the in-tree templates/ and prompts/ as CPM_SHARE
 ```

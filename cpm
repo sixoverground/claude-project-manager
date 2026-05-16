@@ -121,13 +121,14 @@ state_record_dispatch() {
 }
 
 _render_plist() {
-  local user="$1" home="$2" brew_prefix="$3" cpm_bin="$4" cpm_data="$5"
+  local user="$1" home="$2" brew_prefix="$3" cpm_bin="$4" cpm_data="$5" cpm_share="$6"
   local tmpl="$CPM_SHARE/templates/$PLIST_NAME.plist.tmpl"
   local path_value="$brew_prefix/bin:$brew_prefix/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
   sed -e "s|{{USER}}|$user|g" \
       -e "s|{{HOME}}|$home|g" \
       -e "s|{{CPM_BIN}}|$cpm_bin|g" \
       -e "s|{{CPM_DATA}}|$cpm_data|g" \
+      -e "s|{{CPM_SHARE}}|$cpm_share|g" \
       -e "s|{{PATH}}|$path_value|g" \
       "$tmpl"
 }
@@ -425,7 +426,7 @@ cmd_init() {
   if [ -f "$PLIST_SRC" ] && [ "$force" != "true" ]; then
     echo "  [skip] plist exists at $PLIST_SRC (use --force to regenerate)"
   else
-    _render_plist "$user" "$home" "$brew_prefix" "$SCRIPT_PATH" "$CPM_DATA" > "$PLIST_SRC"
+    _render_plist "$user" "$home" "$brew_prefix" "$SCRIPT_PATH" "$CPM_DATA" "$CPM_SHARE" > "$PLIST_SRC"
     echo "  [ok] generated $PLIST_SRC"
   fi
 
@@ -537,7 +538,9 @@ cmd_doctor() {
   if command -v cpm &>/dev/null; then
     echo "  [ok]   cpm on PATH:   yes"
   else
-    echo "  [warn] cpm on PATH:   no (optional: ln -s \"$SCRIPT_PATH\" /opt/homebrew/bin/cpm)"
+    local _brew_pfx
+    _brew_pfx=$(brew --prefix 2>/dev/null || echo "/opt/homebrew")
+    echo "  [warn] cpm on PATH:   no (optional: ln -s \"$SCRIPT_PATH\" $_brew_pfx/bin/cpm)"
   fi
 
   if [ -f "$PROJECTS_FILE" ] && jq -e '.projects' "$PROJECTS_FILE" &>/dev/null; then
