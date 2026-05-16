@@ -7,17 +7,18 @@ SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 
 # CPM_SHARE: read-only bundled assets (templates/, prompts/).
 # In-tree dev: SCRIPT_DIR has templates/ and prompts/ as siblings.
-# Brew install: $(brew --prefix)/share/cpm. Fall back to common Homebrew prefixes.
+# Brew install: $(brew --prefix)/share/claude-project-manager. The pkgshare
+# directory is named after the formula, which is "claude-project-manager".
 if [ -d "$SCRIPT_DIR/templates" ] && [ -d "$SCRIPT_DIR/prompts" ]; then
   CPM_SHARE="${CPM_SHARE:-$SCRIPT_DIR}"
 else
   _brew_prefix="$(brew --prefix 2>/dev/null || echo "")"
-  if [ -n "$_brew_prefix" ] && [ -d "$_brew_prefix/share/cpm" ]; then
-    CPM_SHARE="${CPM_SHARE:-$_brew_prefix/share/cpm}"
-  elif [ -d "/opt/homebrew/share/cpm" ]; then
-    CPM_SHARE="${CPM_SHARE:-/opt/homebrew/share/cpm}"
-  elif [ -d "/usr/local/share/cpm" ]; then
-    CPM_SHARE="${CPM_SHARE:-/usr/local/share/cpm}"
+  if [ -n "$_brew_prefix" ] && [ -d "$_brew_prefix/share/claude-project-manager" ]; then
+    CPM_SHARE="${CPM_SHARE:-$_brew_prefix/share/claude-project-manager}"
+  elif [ -d "/opt/homebrew/share/claude-project-manager" ]; then
+    CPM_SHARE="${CPM_SHARE:-/opt/homebrew/share/claude-project-manager}"
+  elif [ -d "/usr/local/share/claude-project-manager" ]; then
+    CPM_SHARE="${CPM_SHARE:-/usr/local/share/claude-project-manager}"
   else
     CPM_SHARE="${CPM_SHARE:-$SCRIPT_DIR}"  # final fallback; will error later if assets missing
   fi
