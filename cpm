@@ -377,6 +377,12 @@ cmd_init() {
 
   echo "cpm init"
 
+  local dep_fails=0
+  _run_dep_checks || dep_fails=$?
+  if [ "$dep_fails" -gt 0 ]; then
+    echo "  [warn] $dep_fails dependency check(s) failed. cpm needs these to work; install them and re-run 'cpm init'."
+  fi
+
   if [ ! -f "$PROJECTS_FILE" ]; then
     echo '{"projects": []}' > "$PROJECTS_FILE"
     echo "  [ok] created projects.json"
@@ -406,17 +412,20 @@ cmd_init() {
   fi
 
   echo ""
-  echo "Next steps:"
-  echo "  1. cpm doctor       # verify gh / jq / claude are installed and authenticated"
-  echo "  2. cpm new <name>   # walk through setup for your first project"
-  echo "  3. cpm start        # enable the 30-min launchd scheduler"
+  local start_now=""
+  read "start_now?Start the scheduler now? [Y/n]: "
+  if [[ -z "$start_now" || "$start_now" =~ ^[Yy] ]]; then
+    cmd_start
+    echo ""
+    echo "Run 'cpm new' to set up your first project."
+  else
+    echo ""
+    echo "Run 'cpm start' to enable the scheduler, then 'cpm new' to set up your first project."
+  fi
 }
 
-# --- Subcommand: doctor ---
-cmd_doctor() {
+_run_dep_checks() {
   local fails=0
-
-  echo "cpm doctor"
 
   if command -v claude &>/dev/null; then
     echo "  [ok]   claude:        $(claude --version 2>&1 | head -1)"
@@ -445,6 +454,29 @@ cmd_doctor() {
     echo "  [fail] jq:            not installed (brew install jq)"
     fails=$((fails+1))
   fi
+
+  return $fails
+}
+
+_dispatch_routine() {
+  local name="$1" trigger_id="$2"
+  log "[$name] Dispatching trigger $trigger_id"
+  local output
+  output=$(claude -p \
+    --allowed-tools "RemoteTrigger" \
+    --dangerously-skip-permissions \
+    --no-session-persistence \
+    "Run the remote trigger with ID $trigger_id. Use the RemoteTrigger tool with action 'run' and trigger_id '$trigger_id'. Output only the result." \
+    2>&1) || true
+  echo "$output"
+}
+
+# --- Subcommand: doctor ---
+cmd_doctor() {
+  echo "cpm doctor"
+
+  local fails=0
+  _run_dep_checks || fails=$?
 
   if [ -f "$PROJECTS_FILE" ]; then
     if jq -e '.projects' "$PROJECTS_FILE" &>/dev/null; then
@@ -501,39 +533,6 @@ cmd_doctor() {
   else
     echo "$fails check(s) failed."
     exit 1
-  fi
-}
-
-# --- Subcommand: prompt ---
-cmd_prompt() {
-  shift  # remove "prompt" from args
-  local prompt_file="$PROJECT_DIR/prompts/routine.md"
-  local copy=false save=""
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --copy) copy=true; shift ;;
-      --save) save="$2"; shift 2 ;;
-      *) echo "Unknown option: $1"; exit 1 ;;
-    esac
-  done
-
-  if [ ! -f "$prompt_file" ]; then
-    echo "Error: prompt file not found at $prompt_file"
-    exit 1
-  fi
-
-  if [ "$copy" = true ]; then
-    if ! command -v pbcopy &>/dev/null; then
-      echo "Error: pbcopy not available (macOS only)"
-      exit 1
-    fi
-    pbcopy < "$prompt_file"
-    echo "Copied $prompt_file to clipboard ($(wc -l < "$prompt_file" | tr -d ' ') lines)"
-  elif [ -n "$save" ]; then
-    cp "$prompt_file" "$save"
-    echo "Saved to $save"
-  else
-    cat "$prompt_file"
   fi
 }
 
@@ -656,94 +655,51 @@ cmd_add() {
     esac
   done
 
+  # Interactive fallback when no flags given
+  if [ -z "$name" ] && [ ${#repos[@]} -eq 0 ] && [ -z "$trigger_id" ]; then
+    read "name?Project name: "
+    local repos_input=""
+    read "repos_input?GitHub repos (space-separated owner/name): "
+    repos=("${(@s: :)repos_input}")
+    read "trigger_id?Trigger ID (trig_...): "
+    read "branch_prefix?Branch prefix [claude/]: "
+  fi
+
   local result
   result=$(_append_project_to_registry "$name" "$trigger_id" "$branch_prefix" "${repos[@]}") || exit 1
 
   echo "Added project '$name'"
   echo "$result" | jq .
+
+  echo ""
+  local kickoff=""
+  read "kickoff?Kickoff phase 0 now? [Y/n]: "
+  if [[ -z "$kickoff" || "$kickoff" =~ ^[Yy] ]]; then
+    _dispatch_routine "$name" "$trigger_id"
+  fi
 }
 
 # --- Subcommand: new ---
 cmd_new() {
-  shift  # remove "new" from args
-
-  local positional_name=""
-  if [ $# -gt 0 ] && [[ "$1" != --* ]]; then
-    positional_name="$1"
-    shift
+  local prompt_file="$PROJECT_DIR/prompts/setup.md"
+  if [ ! -f "$prompt_file" ]; then
+    echo "Error: setup prompt not found at $prompt_file"
+    exit 1
   fi
-
-  # If flags are present, delegate to cmd_add (non-interactive path)
-  if [ $# -gt 0 ]; then
-    local -a forwarded=("add")
-    [ -n "$positional_name" ] && forwarded+=("--name" "$positional_name")
-    forwarded+=("$@")
-    cmd_add "${forwarded[@]}"
+  if ! command -v pbcopy &>/dev/null; then
+    cat "$prompt_file"
+    echo ""
+    echo "(pbcopy unavailable; printed prompt to stdout. Copy and paste it into Claude Code.)"
     return
   fi
-
-  # Interactive wizard
-  echo "Setting up a new project for cpm."
-  echo ""
-
-  local name="$positional_name"
-  while [ -z "$name" ]; do
-    read "name?Project name (lowercase, hyphenated, used in cpm status): "
-  done
-
-  local repos_input=""
-  while [ -z "$repos_input" ]; do
-    read "repos_input?GitHub repos (space-separated owner/name): "
-  done
-  local -a repos=("${(@s: :)repos_input}")
-
-  local branch_prefix=""
-  read "branch_prefix?Branch prefix [claude/]: "
-
-  echo ""
-  echo "Step 1: Write your phased plan."
-  echo ""
-  echo "  In your project repo:"
-  echo "    cpm prompt --copy"
-  echo "  Paste into Claude Code with a description of what you want to build."
-  echo "  Claude writes docs/plans/<name>.md. Commit and push to main."
-  echo ""
-  local _ack=""
-  read "_ack?Press enter once the plan is committed (Ctrl-C to abort) "
-
-  echo ""
-  echo "Step 2: Create a Claude routine via the Claude Code CLI."
-  echo ""
-  echo "  In your project repo, start a session:"
-  echo "    cd <your project repo> && claude"
-  echo ""
-  echo "  Then in the session:"
-  echo "    /schedule weekly, run the next phase for this project"
-  echo ""
-  echo "  Paste the prompt when asked (use 'cpm prompt --copy' first). Select"
-  echo "  the same repo(s) you listed above. After it's created:"
-  echo "    /schedule list                   (to see the trigger ID)"
-  echo ""
-  echo "  Disable the schedule at https://claude.ai/code/routines so the"
-  echo "  routine only fires when cpm dispatches it."
-  echo ""
-
-  local trigger_id=""
-  while [ -z "$trigger_id" ]; do
-    read "trigger_id?Trigger ID (looks like trig_abc...): "
-  done
-
-  echo ""
-  echo "Adding project to cpm registry..."
-
-  local result
-  result=$(_append_project_to_registry "$name" "$trigger_id" "$branch_prefix" "${repos[@]}") || exit 1
-
-  echo "  [ok] $name added (${#repos[@]} repo(s))"
+  pbcopy < "$prompt_file"
+  echo "The new-project setup prompt is on your clipboard."
   echo ""
   echo "Next steps:"
-  echo "  cpm trigger $name    # fire phase 0 manually to kick things off"
-  echo "  cpm status           # see project state"
+  echo "  1. cd into your project repo (or where you want the plan to live)"
+  echo "  2. Run: claude"
+  echo "  3. Paste the prompt and follow Claude's lead"
+  echo "  4. Claude will end by giving you the exact 'cpm add' command to run"
 }
 
 # --- Subcommand: remove ---
@@ -821,24 +777,14 @@ cmd_trigger() {
   local trigger_id
   trigger_id=$(echo "$project" | jq -r '.trigger_id')
 
-  log "[$name] Manual dispatch: trigger $trigger_id"
-
-  dispatch_output=$(claude -p \
-    --allowed-tools "RemoteTrigger" \
-    --dangerously-skip-permissions \
-    --no-session-persistence \
-    "Run the remote trigger with ID $trigger_id. Use the RemoteTrigger tool with action 'run' and trigger_id '$trigger_id'. Output only the result." \
-    2>&1) || true
-
-  echo "$dispatch_output"
+  _dispatch_routine "$name" "$trigger_id"
 }
 
 # --- Main ---
 case "${1:-help}" in
   init)   cmd_init "$@" ;;
   doctor) cmd_doctor ;;
-  prompt) cmd_prompt "$@" ;;
-  new)    cmd_new "$@" ;;
+  new)    cmd_new ;;
   run)    cmd_run ;;
   status) cmd_status ;;
   start)  cmd_start ;;
@@ -862,13 +808,12 @@ case "${1:-help}" in
     echo "  stop     Disable the scheduler"
     echo "  status   Show project states and scheduler status"
     echo "  logs     Tail recent cpm logs"
-    echo "  new      Add a project via an interactive wizard"
-    echo "  add      Add a project to the registry (flag-based)"
+    echo "  new      Copy the new-project setup prompt to the clipboard"
+    echo "  add      Add a project to the registry (flag-based or interactive)"
     echo "  remove   Remove a project from the registry"
     echo "  pause    Pause a project (skip during cpm runs)"
     echo "  resume   Resume a paused project"
     echo "  trigger  Manually dispatch a project's routine"
-    echo "  prompt   Print the routine prompt (use with --copy or --save)"
     echo ""
     echo "Add usage:"
     echo "  cpm add --name <name> --repo <owner/repo> [--repo <owner/repo>] --trigger <trigger_id> [--prefix <branch_prefix>]"

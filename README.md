@@ -47,11 +47,11 @@ cd claude-project-manager
 chmod +x cpm
 ln -s "$(pwd)/cpm" /opt/homebrew/bin/cpm   # optional: put cpm on PATH
 
-cpm init        # generate plist + empty projects.json
-cpm doctor      # verify gh, jq, claude are installed and authenticated
-cpm new <name>  # walk through onboarding your first project
-cpm start       # enable the 30-minute launchd scheduler
+cpm init        # check deps, generate plist + empty projects.json, offer to start the scheduler
+cpm new         # copy the new-project setup prompt to your clipboard
 ```
+
+Then paste that prompt into Claude Code in your project repo. Claude does the rest and tells you the exact `cpm add` command to run when it's done. See [Set up your first project](#set-up-your-first-project) for the full walkthrough.
 
 `cpm init` is idempotent and safe to re-run. It won't overwrite your `projects.json` and won't regenerate the plist unless you pass `--force`.
 
@@ -59,27 +59,15 @@ cpm start       # enable the 30-minute launchd scheduler
 
 ### Phased plan
 
-A phased plan lives at `docs/plans/<plan-name>.md` *in your project repo*. It describes the work as a numbered sequence of PRs, each scoped tightly enough to finish in a single Claude Code session.
-
-The canonical prompt for designing such a plan is at [`prompts/routine.md`](prompts/routine.md). To get it into Claude Code:
-
-```bash
-cpm prompt --copy   # copies the prompt to your clipboard
-# or
-cpm prompt --save docs/plans/my-plan.md   # writes the prompt to a file
-```
-
-Paste it into Claude Code in your project repo and describe what you want to build. Claude will produce a plan with a PR sequence table, per-phase scope/risks/acceptance criteria, and an "Autonomous Workflow" section that references `cpm`.
+A phased plan lives at `docs/plans/<plan-name>.md` *in your project repo*. It describes the work as a numbered sequence of PRs, each scoped tightly enough to finish in a single Claude Code session. You don't write this yourself; Claude Code drafts it during `cpm new` (see the walkthrough below).
 
 ### Claude routine
 
-In Claude Code, a *routine* is a saved prompt you can invoke remotely. For a cpm-managed project, you create one routine per project, and its job is "read `docs/plans/<name>.md`, find the next phase, do the work, open a PR."
-
-Use the same prompt from `cpm prompt`. Save it as a routine. The routine's Trigger ID (`trig_...`) is what you put in `projects.json`.
+In Claude Code, a *routine* is a saved prompt that runs autonomously in the cloud when invoked. For a cpm-managed project, you create one routine per project. Its job is to read `docs/plans/<name>.md`, find the next Pending phase, do the work, and open a PR. cpm fires the routine each time the previous phase's PR merges.
 
 ### Trigger
 
-The Trigger ID is how `cpm` calls the routine. `cpm` dispatches via:
+The Trigger ID (`trig_...`) is how cpm calls a routine. cpm dispatches via:
 
 ```bash
 claude -p --allowed-tools "RemoteTrigger" --dangerously-skip-permissions \
@@ -87,7 +75,7 @@ claude -p --allowed-tools "RemoteTrigger" --dangerously-skip-permissions \
   "Run the remote trigger with ID trig_... ..."
 ```
 
-You don't need to remember that. `cpm` handles it. You just need the trigger_id.
+You don't need to remember that. cpm handles it. You just need to record the trigger_id in your registry, which `cpm add` does for you.
 
 ### Claude Project Manager (`cpm`)
 
@@ -95,80 +83,53 @@ A zsh script + launchd plist. Every 30 minutes it walks `projects.json`, checks 
 
 ## Set up your first project
 
-End-to-end walkthrough. Assumes you've already run `cpm init`, `cpm doctor`, and the prerequisites pass.
+End-to-end walkthrough. Assumes you've already run `cpm init` and the prerequisites pass.
 
-1. **In your project repo, write a phased plan.**
+1. **Run `cpm new`.**
+   ```bash
+   cpm new
+   ```
+   This copies the new-project setup prompt to your clipboard and tells you what to do next. No arguments needed.
+
+2. **Open Claude Code in your project repo and paste the prompt.**
    ```bash
    cd ~/Code/my-app
-   cpm prompt --copy
-   ```
-   Open Claude Code in that repo. Paste the prompt and add a description of what you want to build. Claude writes `docs/plans/<name>.md`. Review it, then commit and push to `main`.
-
-2. **Create a Claude routine via the Claude Code CLI.**
-
-   In your project repo, copy the routine prompt to your clipboard:
-   ```bash
-   cpm prompt --copy
-   ```
-
-   Start a Claude Code session in the same repo, then create the routine with `/schedule`:
-   ```bash
    claude
    ```
-   ```
-   /schedule weekly, run the next phase for this project
-   ```
+   Then paste from your clipboard. Claude walks you through the whole setup:
+   - Asks for the project name, repo(s), and what you want to build
+   - Designs a phased plan and writes it to `docs/plans/<name>.md` (committed to main)
+   - Creates a routine via `/schedule` with the right execution prompt
+   - Surfaces the routine's trigger ID
+   - Tells you to toggle off **Repeats** at [claude.ai/code/routines](https://claude.ai/code/routines) (the CLI can't disable a routine's schedule yet)
+   - Ends by printing an exact `cpm add` command for you to copy
 
-   `/schedule` is the only way to create a routine from the CLI today, and it requires a schedule trigger (minimum cadence: 1 hour). cpm fires the routine directly via `RemoteTrigger`, so the cadence doesn't matter functionally; pick anything (weekly is fine).
-
-   Claude walks you through configuration conversationally. When it asks for the prompt, paste from your clipboard. Select the repo(s) you want the routine to operate on.
-
-   After the routine is created, list it to see the trigger ID:
-   ```
-   /schedule list
-   ```
-   The ID format is `trig_01ABCDE...`. Copy it.
-
-   **Disable the schedule** so the routine only fires when cpm tells it to. The CLI can't currently disable a schedule without removing the routine, so:
-   - Open [claude.ai/code/routines](https://claude.ai/code/routines)
-   - Click your routine
-   - Toggle off the **Repeats** section
-
-   The trigger ID stays valid even when the schedule is paused.
-
-3. **Register the project with cpm.**
+3. **Run the `cpm add` command Claude gave you.**
    ```bash
-   cpm new my-app
+   cpm add --name my-app --repo yourorg/my-app --trigger trig_01ABCDE...
    ```
-   The wizard walks you through repos, branch prefix, and trigger_id. If you'd rather pass everything as flags:
-   ```bash
-   cpm add --name my-app --repo yourorg/my-app --trigger trig_abc123
-   ```
+   cpm appends the project to `projects.json` and asks if you want to kickoff phase 0 now. Say Y to fire the routine immediately. If you'd rather skip that, say n and run `cpm trigger my-app` whenever you're ready.
 
-4. **Fire phase 0 to kick things off.**
-   ```bash
-   cpm trigger my-app
-   ```
-   The routine starts, works on phase 0, opens a PR. Review and merge it. The next time `cpm` runs (within 30 minutes), it sees the merge and dispatches phase 1 automatically.
-
-5. **Watch progress.**
+4. **Watch progress.**
    ```bash
    cpm status   # one-line summary per project
    cpm logs     # tail the run log
    ```
+   Once phase 0's PR is opened, review and merge it. The next time `cpm` runs (within 30 minutes), it sees the merge and dispatches phase 1 automatically. Repeat until done.
+
+If you closed your terminal mid-setup, you can recover by running `cpm add` with no arguments. It will prompt for the project name, repo(s), and trigger ID; the trigger ID is visible via `/schedule list` in any Claude Code session, or as part of the URL at [claude.ai/code/routines](https://claude.ai/code/routines).
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `cpm init`           | One-time setup. Generate plist and empty projects.json. |
+| `cpm init`           | One-time setup. Checks deps, generates plist + empty projects.json, optionally starts the scheduler. |
 | `cpm doctor`         | Verify deps, auth, projects.json, plist, scheduler state. |
-| `cpm new <name>`     | Interactive wizard to onboard a new project. |
-| `cpm add ...`        | Add a project via flags (scriptable). |
+| `cpm new`            | Copy the new-project setup prompt to the clipboard. |
+| `cpm add ...`        | Register a project (flag-based, or interactive when called with no flags). |
 | `cpm remove <name>`  | Delete a project from the registry. |
 | `cpm pause <name>`   | Skip this project during runs. |
 | `cpm resume <name>`  | Un-pause. |
-| `cpm prompt`         | Print the routine prompt. `--copy` to clipboard, `--save <path>` to file. |
 | `cpm run`            | Execute cpm once (check all projects, dispatch as needed). |
 | `cpm start`          | Enable the launchd scheduler (every 30 min). |
 | `cpm stop`           | Disable the scheduler. |
