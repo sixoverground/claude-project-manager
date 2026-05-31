@@ -11,12 +11,12 @@ This is the canonical reference for what `cpm` does on each run. For setup and C
 
 ## Check logic (for each project)
 
-Each project may have one or more repos. All repos are checked before making a dispatch decision. `branch_prefix` defaults to `claude/` when not specified.
+Each project may have one or more repos. All repos are checked before making a dispatch decision. `branch_prefix` defaults to `claude/` when not specified. `target_branch` is optional; when set, it is appended to the PR search as `base:{target_branch}` so only PRs targeting that branch count. Both fields can be overridden per repo inside a project.
 
 ### Step 1: Check for open phase PR
 
 ```bash
-gh pr list --repo {repo} --state open --search "head:{branch_prefix}" --json number,headRefName,createdAt
+gh pr list --repo {repo} --state open --search "head:{branch_prefix} [base:{target_branch}]" --json number,headRefName,baseRefName
 ```
 
 If **any** repo has an open phase PR, SKIP (current phase still in progress).
@@ -24,7 +24,7 @@ If **any** repo has an open phase PR, SKIP (current phase still in progress).
 ### Step 2: Check for recently merged phase PR
 
 ```bash
-gh pr list --repo {repo} --state merged --search "head:{branch_prefix}" --json number,mergedAt,headRefName --jq 'sort_by(.mergedAt) | last'
+gh pr list --repo {repo} --state merged --search "head:{branch_prefix} [base:{target_branch}]" --json number,mergedAt,headRefName,baseRefName --jq 'sort_by(.mergedAt) | last'
 ```
 
 If the most recently merged phase PR (across all repos) was merged within the last 4 hours, a new phase should be started.

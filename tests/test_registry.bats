@@ -7,7 +7,7 @@ setup() {
 }
 
 @test "_append_project_to_registry appends a single-repo project" {
-  cpm_eval "_append_project_to_registry myapp trig_abc '' yourorg/myapp" >/dev/null
+  cpm_eval "_append_project_to_registry myapp trig_abc '' '' yourorg/myapp" >/dev/null
   run jq -r '.projects[0].name' "$CPM_DATA/projects.json"
   [ "$status" -eq 0 ]
   [ "$output" = "myapp" ]
@@ -20,51 +20,71 @@ setup() {
 }
 
 @test "_append_project_to_registry accepts multiple repos" {
-  cpm_eval "_append_project_to_registry myapp trig_abc '' yourorg/web yourorg/ios" >/dev/null
+  cpm_eval "_append_project_to_registry myapp trig_abc '' '' yourorg/web yourorg/ios" >/dev/null
   run jq '.projects[0].repos | length' "$CPM_DATA/projects.json"
   [ "$output" = "2" ]
 }
 
 @test "_append_project_to_registry records branch_prefix when given" {
-  cpm_eval "_append_project_to_registry myapp trig_abc 'cpm/' yourorg/myapp" >/dev/null
+  cpm_eval "_append_project_to_registry myapp trig_abc 'cpm/' '' yourorg/myapp" >/dev/null
   run jq -r '.projects[0].branch_prefix' "$CPM_DATA/projects.json"
   [ "$output" = "cpm/" ]
 }
 
 @test "_append_project_to_registry omits branch_prefix when empty" {
-  cpm_eval "_append_project_to_registry myapp trig_abc '' yourorg/myapp" >/dev/null
+  cpm_eval "_append_project_to_registry myapp trig_abc '' '' yourorg/myapp" >/dev/null
   run jq '.projects[0] | has("branch_prefix")' "$CPM_DATA/projects.json"
   [ "$output" = "false" ]
 }
 
+@test "_append_project_to_registry records target_branch when given" {
+  cpm_eval "_append_project_to_registry myapp trig_abc '' 'develop' yourorg/myapp" >/dev/null
+  run jq -r '.projects[0].target_branch' "$CPM_DATA/projects.json"
+  [ "$output" = "develop" ]
+}
+
+@test "_append_project_to_registry omits target_branch when empty" {
+  cpm_eval "_append_project_to_registry myapp trig_abc '' '' yourorg/myapp" >/dev/null
+  run jq '.projects[0] | has("target_branch")' "$CPM_DATA/projects.json"
+  [ "$output" = "false" ]
+}
+
+@test "_append_project_to_registry records both branch_prefix and target_branch" {
+  cpm_eval "_append_project_to_registry myapp trig_abc 'cpm/' 'release/2026' yourorg/myapp" >/dev/null
+  run jq -r '.projects[0].branch_prefix' "$CPM_DATA/projects.json"
+  [ "$output" = "cpm/" ]
+  run jq -r '.projects[0].target_branch' "$CPM_DATA/projects.json"
+  [ "$output" = "release/2026" ]
+}
+
 @test "_append_project_to_registry rejects duplicate project name" {
-  cpm_eval "_append_project_to_registry myapp trig_abc '' yourorg/myapp" >/dev/null
-  run cpm_eval "_append_project_to_registry myapp trig_xyz '' yourorg/other"
+  cpm_eval "_append_project_to_registry myapp trig_abc '' '' yourorg/myapp" >/dev/null
+  run cpm_eval "_append_project_to_registry myapp trig_xyz '' '' yourorg/other"
   [ "$status" -ne 0 ]
   [[ "$output" == *"already exists"* ]]
 }
 
 @test "_append_project_to_registry rejects missing name" {
-  run cpm_eval "_append_project_to_registry '' trig_abc '' yourorg/myapp"
+  run cpm_eval "_append_project_to_registry '' trig_abc '' '' yourorg/myapp"
   [ "$status" -ne 0 ]
   [[ "$output" == *"name is required"* ]]
 }
 
 @test "_append_project_to_registry rejects missing trigger_id" {
-  run cpm_eval "_append_project_to_registry myapp '' '' yourorg/myapp"
+  run cpm_eval "_append_project_to_registry myapp '' '' '' yourorg/myapp"
   [ "$status" -ne 0 ]
   [[ "$output" == *"trigger_id is required"* ]]
 }
 
 @test "_append_project_to_registry rejects empty repo list" {
-  run cpm_eval "_append_project_to_registry myapp trig_abc ''"
+  run cpm_eval "_append_project_to_registry myapp trig_abc '' ''"
   [ "$status" -ne 0 ]
   [[ "$output" == *"at least one repo"* ]]
 }
 
 @test "two projects can coexist in projects.json" {
-  cpm_eval "_append_project_to_registry alpha trig_a '' o/a" >/dev/null
-  cpm_eval "_append_project_to_registry beta trig_b '' o/b" >/dev/null
+  cpm_eval "_append_project_to_registry alpha trig_a '' '' o/a" >/dev/null
+  cpm_eval "_append_project_to_registry beta trig_b '' '' o/b" >/dev/null
   run jq '.projects | length' "$CPM_DATA/projects.json"
   [ "$output" = "2" ]
 }
