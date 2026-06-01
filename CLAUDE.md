@@ -16,16 +16,20 @@ Each project may have one or more repos. All repos are checked before making a d
 ### Step 1: Check for open phase PR
 
 ```bash
-gh pr list --repo {repo} --state open --search "head:{branch_prefix} [base:{target_branch}]" --json number,headRefName,baseRefName
+gh pr list --repo {repo} --state open --search "head:{branch_prefix}" --json number,headRefName,baseRefName
 ```
+
+When `target_branch` is configured, ` base:{target_branch}` is appended to the search string so only PRs targeting that base count.
 
 If **any** repo has an open phase PR, SKIP (current phase still in progress).
 
 ### Step 2: Check for recently merged phase PR
 
 ```bash
-gh pr list --repo {repo} --state merged --search "head:{branch_prefix} [base:{target_branch}]" --json number,mergedAt,headRefName,baseRefName --jq 'sort_by(.mergedAt) | last'
+gh pr list --repo {repo} --state merged --search "head:{branch_prefix}" --json number,mergedAt,headRefName,baseRefName --jq 'sort_by(.mergedAt) | last'
 ```
+
+Same `base:{target_branch}` rule applies when configured.
 
 If the most recently merged phase PR (across all repos) was merged within the last 4 hours, a new phase should be started.
 
