@@ -231,8 +231,8 @@ YOLO mode (`"yolo": true` on a project) tells cpm to auto-merge a phase PR as so
 
 1. **Not draft.** The PR is not a draft.
 2. **No blocking labels.** None of `do-not-merge`, `wip`, `blocked` are applied.
-3. **CI green.** Every check on the PR has succeeded. A PR with zero configured checks is refused (failsafe against misconfigured CI).
-4. **No `CHANGES_REQUESTED` reviews outstanding.** Anyone (human, Copilot, other bots) can block by requesting changes.
+3. **CI green.** Every check on the PR is either `SUCCESS` or `SKIPPED`. Anything else (pending, failing, `NEUTRAL`, `ACTION_REQUIRED`, etc.) blocks. A PR with zero configured checks is also refused (failsafe against misconfigured CI).
+4. **No `CHANGES_REQUESTED` reviews outstanding.** Each reviewer's most recent review is what counts: a CHANGES_REQUESTED that the same reviewer later replaced with an APPROVE no longer blocks. Anyone (human, Copilot, other bots) can block by requesting changes.
 5. **Copilot acknowledged.** Copilot has reviewed the PR at least once, AND a commit on the PR carries the trailer `Copilot-Addressed: yes` with a timestamp newer than Copilot's latest review.
 
 When all five pass, cpm runs `gh pr merge <pr> --squash --delete-branch` and records the attempt. The next cpm cycle detects the merged PR via the normal path and dispatches the next phase.

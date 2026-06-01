@@ -94,8 +94,8 @@ All five gates must pass before cpm calls `gh pr merge`:
 
 1. **Not draft.** `gh pr view <pr> --json isDraft` is `false`.
 2. **No blocking labels.** PR carries none of `do-not-merge`, `wip`, `blocked` (hardcoded for now).
-3. **CI green.** `gh pr checks <pr> --json state` has zero `PENDING|IN_PROGRESS|QUEUED` and zero `FAIL|ERROR|CANCELLED|TIMED_OUT` rows, and at least one check overall (zero checks is treated as failsafe-block).
-4. **No `CHANGES_REQUESTED` outstanding.** Count of reviews where `state=="CHANGES_REQUESTED"` (across all reviewers, including Copilot) is zero.
+3. **CI green.** `gh pr checks <pr> --json state` has zero `PENDING|IN_PROGRESS|QUEUED` rows and every other row is either `SUCCESS` or `SKIPPED`. Any other state (`FAILURE`, `ERROR`, `CANCELLED`, `TIMED_OUT`, `NEUTRAL`, `ACTION_REQUIRED`, `STARTUP_FAILURE`, `STALE`) blocks. At least one check must exist (zero checks is treated as failsafe-block).
+4. **No `CHANGES_REQUESTED` outstanding.** For each reviewer, only their latest review counts. The check passes when no reviewer's most recent review is `CHANGES_REQUESTED` (which means a CHANGES_REQUESTED that the same reviewer later superseded with an APPROVE or COMMENT no longer blocks).
 5. **Copilot acknowledged.** The latest review submitted by `copilot-pull-request-reviewer[bot]` (or `github-copilot[bot]`, or `Copilot`) has a `submitted_at` timestamp older than the latest commit on the PR whose message contains `Copilot-Addressed: yes`. If Copilot has never reviewed, gate 5 fails (cpm waits).
 
 ### State + dedup

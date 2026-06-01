@@ -184,18 +184,23 @@ _yolo_check_pr() {
     log_to_file "$log_prefix FAIL: $pending check(s) still running"
     return 1
   fi
-  failing=$(echo "$checks_json" | jq '[.[] | select(.state | test("FAIL|ERROR|CANCELLED|TIMED_OUT"; "i"))] | length')
-  if [ "$failing" -gt 0 ]; then
-    log_to_file "$log_prefix FAIL: $failing check(s) failing"
+  # Treat only SUCCESS and SKIPPED as green. NEUTRAL, ACTION_REQUIRED,
+  # STARTUP_FAILURE, STALE, FAIL/ERROR/CANCELLED/TIMED_OUT all block.
+  local non_green
+  non_green=$(echo "$checks_json" | jq '[.[] | select(.state | test("^(SUCCESS|SKIPPED)$"; "i") | not)] | length')
+  if [ "$non_green" -gt 0 ]; then
+    log_to_file "$log_prefix FAIL: $non_green check(s) not green (only SUCCESS and SKIPPED count as green)"
     return 1
   fi
 
-  # Gate 4: no outstanding CHANGES_REQUESTED reviews from any reviewer
+  # Gate 4: no outstanding CHANGES_REQUESTED reviews. Use each reviewer's
+  # latest review only, so a CHANGES_REQUESTED that was later superseded by
+  # an APPROVE or COMMENT from the same reviewer no longer blocks.
   local changes_requested
   changes_requested=$(gh api "repos/$repo/pulls/$pr/reviews" \
-    --jq '[.[] | select(.state=="CHANGES_REQUESTED")] | length' 2>/dev/null || echo "0")
+    --jq '[.[] | select(.user.login != null)] | group_by(.user.login) | map(sort_by(.submitted_at) | last) | [.[] | select(.state=="CHANGES_REQUESTED")] | length' 2>/dev/null || echo "0")
   if [ "$changes_requested" -gt 0 ]; then
-    log_to_file "$log_prefix FAIL: $changes_requested CHANGES_REQUESTED review(s) outstanding"
+    log_to_file "$log_prefix FAIL: $changes_requested reviewer(s) have a current CHANGES_REQUESTED review"
     return 1
   fi
 
@@ -347,13 +352,19 @@ cmd_run() {
             fi
 
             if [ "$can_merge" = "true" ]; then
-              log "[$name] YOLO MERGE: $repo#$open_pr_num"
-              log_to_file "[$name] YOLO MERGE: $repo#$open_pr_num"
-              local merge_out
-              merge_out=$(gh pr merge "$open_pr_num" --repo "$repo" --squash --delete-branch 2>&1) || true
-              log_to_file "[$name] YOLO merge output: $merge_out"
+              log "[$name] YOLO MERGE attempt: $repo#$open_pr_num"
+              log_to_file "[$name] YOLO MERGE attempt: $repo#$open_pr_num"
+              local merge_out merge_exit=0
+              merge_out=$(gh pr merge "$open_pr_num" --repo "$repo" --squash --delete-branch 2>&1) || merge_exit=$?
+              log_to_file "[$name] YOLO merge output (exit $merge_exit): $merge_out"
+              # Record the attempt either way so cooldown/cap apply even on
+              # failed merges (otherwise we'd hammer GitHub on a broken PR).
               state_record_yolo_attempt "$name" "$yolo_pr_key"
-              yolo_action="merged"
+              if [ "$merge_exit" -eq 0 ]; then
+                yolo_action="merged"
+              else
+                yolo_action="failed"
+              fi
             fi
           fi
         fi
@@ -408,6 +419,9 @@ cmd_run() {
       case "$yolo_action" in
         merged)
           summary_rows+=("| $name | yolo merged | SKIP | PR #$open_pr_num merged via YOLO, next phase next cycle |")
+          ;;
+        failed)
+          summary_rows+=("| $name | open PR | SKIP | YOLO merge failed on #$open_pr_num (see logs) |")
           ;;
         cooldown)
           summary_rows+=("| $name | open PR | SKIP | YOLO cooldown on #$open_pr_num |")
