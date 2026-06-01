@@ -76,6 +76,47 @@ claude -p --allowed-tools "RemoteTrigger" --dangerously-skip-permissions \
 
 **Exception:** If a phase PR was merged more than 4 hours ago AND there is no open PR AND no recent branch activity, still dispatch. The previous run may have failed.
 
+### YOLO mode overlay
+
+When a project has `"yolo": true`, an additional branch runs whenever there is an open phase PR. Before falling through to SKIP, cpm attempts to auto-merge:
+
+| Open phase PR | YOLO gates pass | Under cap + past cooldown | Action |
+|:-:|:-:|:-:|---|
+| Yes | Yes | Yes | **MERGE** (then SKIP for this run; next run dispatches next phase) |
+| Yes | Yes | No  | SKIP (logged as YOLO COOLDOWN or YOLO STUCK) |
+| Yes | No  | any | SKIP (gate diagnostic logged) |
+
+The merge is `gh pr merge <pr> --squash --delete-branch`. The next cpm cycle handles the dispatch via the existing path.
+
+## YOLO check logic
+
+All five gates must pass before cpm calls `gh pr merge`:
+
+1. **Not draft.** `gh pr view <pr> --json isDraft` is `false`.
+2. **No blocking labels.** PR carries none of `do-not-merge`, `wip`, `blocked` (hardcoded for now).
+3. **CI green.** `gh pr checks <pr> --json state` has zero `PENDING|IN_PROGRESS|QUEUED` rows and every other row is either `SUCCESS` or `SKIPPED`. Any other state (`FAILURE`, `ERROR`, `CANCELLED`, `TIMED_OUT`, `NEUTRAL`, `ACTION_REQUIRED`, `STARTUP_FAILURE`, `STALE`) blocks. At least one check must exist (zero checks is treated as failsafe-block).
+4. **No `CHANGES_REQUESTED` outstanding.** For each reviewer, only their latest review counts. The check passes when no reviewer's most recent review is `CHANGES_REQUESTED` (which means a CHANGES_REQUESTED that the same reviewer later superseded with an APPROVE or COMMENT no longer blocks).
+5. **Copilot acknowledged.** The latest review submitted by `copilot-pull-request-reviewer[bot]` (or `github-copilot[bot]`, or `Copilot`) has a `submitted_at` timestamp older than the latest commit on the PR whose message contains `Copilot-Addressed: yes`. If Copilot has never reviewed, gate 5 fails (cpm waits).
+
+### State + dedup
+
+YOLO attempts are recorded in `.cpm-state.json` alongside dispatch state:
+
+```json
+{
+  "project-name": {
+    "last_dispatched_for_pr": "...",
+    "last_dispatched_at": "...",
+    "dispatch_count": 1,
+    "last_yolo_attempt_for_pr": "owner/repo#42",
+    "last_yolo_attempt_at": "2026-06-01T14:00:00Z",
+    "yolo_attempt_count": 1
+  }
+}
+```
+
+`YOLO_ATTEMPT_MAX=5` per PR, `YOLO_COOLDOWN_HOURS=1` between attempts. Hitting the cap logs `YOLO STUCK` and surfaces in `cpm status`.
+
 ## Summary output
 
 After checking all projects, print a table:

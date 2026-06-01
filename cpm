@@ -42,6 +42,13 @@ DISPATCH_COOLDOWN_HOURS=2
 DISPATCH_MAX_RETRIES=3
 DEFAULT_BRANCH_PREFIX="claude/"
 
+# YOLO mode (opt-in per project): auto-merge phase PRs once a small set of
+# gates pass. See CLAUDE.md for the gate definitions.
+YOLO_ATTEMPT_MAX=5
+YOLO_COOLDOWN_HOURS=1
+YOLO_BLOCKING_LABELS="do-not-merge wip blocked"
+YOLO_MARKER="Copilot-Addressed: yes"
+
 # Ensure PATH includes required binaries (critical for launchd)
 export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$HOME/.nvm/versions/node/v24.14.0/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
@@ -117,8 +124,117 @@ state_record_dispatch() {
   now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   tmp="$STATE_FILE.tmp"
   jq --arg n "$name" --arg pr "$pr_key" --arg ts "$now" --argjson count "$new_count" \
-    '.[$n] = {last_dispatched_for_pr: $pr, last_dispatched_at: $ts, dispatch_count: $count}' \
+    '.[$n] = ((.[$n] // {}) + {last_dispatched_for_pr: $pr, last_dispatched_at: $ts, dispatch_count: $count})' \
     "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+}
+
+state_record_yolo_attempt() {
+  local name="$1" pr_key="$2"
+  ensure_state_file
+  local prev_pr prev_count new_count
+  prev_pr=$(state_get "$name" "last_yolo_attempt_for_pr")
+  prev_count=$(state_get "$name" "yolo_attempt_count")
+  new_count=1
+  if [ "$prev_pr" = "$pr_key" ] && [ -n "$prev_count" ]; then
+    new_count=$((prev_count + 1))
+  fi
+  local now tmp
+  now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  tmp="$STATE_FILE.tmp"
+  jq --arg n "$name" --arg pr "$pr_key" --arg ts "$now" --argjson count "$new_count" \
+    '.[$n] = ((.[$n] // {}) + {last_yolo_attempt_for_pr: $pr, last_yolo_attempt_at: $ts, yolo_attempt_count: $count})' \
+    "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+}
+
+# Returns 0 if all YOLO gates pass for this PR, non-zero otherwise. Reasons
+# are written to the daily log. Reads, no writes; safe to call repeatedly.
+_yolo_check_pr() {
+  local repo="$1" pr="$2" name="$3"
+  local log_prefix="[$name] YOLO check $repo#$pr"
+
+  # Gate 1: PR is not draft
+  local is_draft
+  is_draft=$(gh pr view "$pr" --repo "$repo" --json isDraft --jq .isDraft 2>/dev/null || echo "true")
+  if [ "$is_draft" = "true" ]; then
+    log_to_file "$log_prefix FAIL: PR is draft"
+    return 1
+  fi
+
+  # Gate 2: no blocking labels
+  local labels
+  labels=$(gh pr view "$pr" --repo "$repo" --json labels --jq '.labels[].name' 2>/dev/null || echo "")
+  local blocker
+  for blocker in ${(s: :)YOLO_BLOCKING_LABELS}; do
+    if echo "$labels" | grep -Fxq "$blocker"; then
+      log_to_file "$log_prefix FAIL: blocking label '$blocker'"
+      return 1
+    fi
+  done
+
+  # Gate 3: CI green (refuse to merge a PR with no checks at all)
+  local checks_json total pending failing
+  checks_json=$(gh pr checks "$pr" --repo "$repo" --json state 2>/dev/null || echo "[]")
+  total=$(echo "$checks_json" | jq 'length' 2>/dev/null || echo "0")
+  if [ "$total" -eq 0 ]; then
+    log_to_file "$log_prefix FAIL: no CI checks configured (refusing to auto-merge)"
+    return 1
+  fi
+  pending=$(echo "$checks_json" | jq '[.[] | select(.state | test("PENDING|IN_PROGRESS|QUEUED"; "i"))] | length')
+  if [ "$pending" -gt 0 ]; then
+    log_to_file "$log_prefix FAIL: $pending check(s) still running"
+    return 1
+  fi
+  # Treat only SUCCESS and SKIPPED as green. NEUTRAL, ACTION_REQUIRED,
+  # STARTUP_FAILURE, STALE, FAIL/ERROR/CANCELLED/TIMED_OUT all block.
+  local non_green
+  non_green=$(echo "$checks_json" | jq '[.[] | select(.state | test("^(SUCCESS|SKIPPED)$"; "i") | not)] | length')
+  if [ "$non_green" -gt 0 ]; then
+    log_to_file "$log_prefix FAIL: $non_green check(s) not green (only SUCCESS and SKIPPED count as green)"
+    return 1
+  fi
+
+  # Gate 4: no outstanding CHANGES_REQUESTED reviews. Use each reviewer's
+  # latest review only, so a CHANGES_REQUESTED that was later superseded by
+  # an APPROVE or COMMENT from the same reviewer no longer blocks.
+  local changes_requested
+  changes_requested=$(gh api "repos/$repo/pulls/$pr/reviews" \
+    --jq '[.[] | select(.user.login != null)] | group_by(.user.login) | map(sort_by(.submitted_at) | last) | [.[] | select(.state=="CHANGES_REQUESTED")] | length' 2>/dev/null || echo "0")
+  if [ "$changes_requested" -gt 0 ]; then
+    log_to_file "$log_prefix FAIL: $changes_requested reviewer(s) have a current CHANGES_REQUESTED review"
+    return 1
+  fi
+
+  # Gate 5: Copilot has reviewed AND a Copilot-Addressed marker commit exists
+  # whose timestamp is newer than the latest Copilot review.
+  local copilot_filter='(.user.login=="copilot-pull-request-reviewer" or .user.login=="copilot-pull-request-reviewer[bot]" or .user.login=="github-copilot[bot]" or .user.login=="Copilot")'
+  local copilot_ts
+  copilot_ts=$(gh api "repos/$repo/pulls/$pr/reviews" \
+    --jq "[.[] | select($copilot_filter)] | sort_by(.submitted_at) | last | .submitted_at" 2>/dev/null)
+  if [ -z "$copilot_ts" ] || [ "$copilot_ts" = "null" ]; then
+    log_to_file "$log_prefix FAIL: Copilot has not reviewed yet"
+    return 1
+  fi
+
+  local marker_ts
+  marker_ts=$(gh api "repos/$repo/pulls/$pr/commits" \
+    --jq "[.[] | select(.commit.message | contains(\"$YOLO_MARKER\"))] | sort_by(.commit.committer.date) | last | .commit.committer.date" 2>/dev/null)
+  if [ -z "$marker_ts" ] || [ "$marker_ts" = "null" ]; then
+    log_to_file "$log_prefix FAIL: no '$YOLO_MARKER' marker commit on PR"
+    return 1
+  fi
+
+  local copilot_clean="${copilot_ts%%.*}"; copilot_clean="${copilot_clean%Z}"
+  local marker_clean="${marker_ts%%.*}"; marker_clean="${marker_clean%Z}"
+  local copilot_epoch marker_epoch
+  copilot_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%S" "$copilot_clean" "+%s" 2>/dev/null || echo "0")
+  marker_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%S" "$marker_clean" "+%s" 2>/dev/null || echo "0")
+  if [ "$marker_epoch" -le "$copilot_epoch" ]; then
+    log_to_file "$log_prefix FAIL: marker commit ($marker_ts) is not newer than latest Copilot review ($copilot_ts)"
+    return 1
+  fi
+
+  log_to_file "$log_prefix PASS: all gates green"
+  return 0
 }
 
 _render_plist() {
@@ -165,6 +281,7 @@ cmd_run() {
     trigger_id=$(echo "$project" | jq -r '.trigger_id')
     project_prefix=$(echo "$project" | jq -r '.branch_prefix // empty')
     project_target_branch=$(echo "$project" | jq -r '.target_branch // empty')
+    yolo=$(echo "$project" | jq -r '.yolo // false')
     paused=$(echo "$project" | jq -r '.paused')
 
     # Skip paused projects
@@ -178,6 +295,7 @@ cmd_run() {
     local repos=$(echo "$project" | jq -c '.repos[]')
     local skip_project=false
     local skip_reason=""
+    local yolo_action=""
     local best_merged_at=""
     local best_merged_pr_num=""
     local best_merged_branch=""
@@ -201,6 +319,56 @@ cmd_run() {
 
       if [ "$open_count" -gt 0 ]; then
         open_pr_num=$(echo "$open_prs" | jq -r '.[0].number')
+
+        # YOLO: when enabled, try to auto-merge the open PR if all gates pass
+        # and we're not in cooldown / over the attempt cap. Regardless of the
+        # outcome, this run still ends in SKIP for this project; the next run
+        # picks up the merged PR via the existing DISPATCH path.
+        if [ "$yolo" = "true" ]; then
+          local yolo_pr_key="${repo}#${open_pr_num}"
+          if _yolo_check_pr "$repo" "$open_pr_num" "$name"; then
+            local prev_yolo_pr prev_yolo_at prev_yolo_count
+            prev_yolo_pr=$(state_get "$name" "last_yolo_attempt_for_pr")
+            prev_yolo_at=$(state_get "$name" "last_yolo_attempt_at")
+            prev_yolo_count=$(state_get "$name" "yolo_attempt_count")
+
+            local can_merge=true
+            if [ "$prev_yolo_pr" = "$yolo_pr_key" ]; then
+              if [ "${prev_yolo_count:-0}" -ge "$YOLO_ATTEMPT_MAX" ]; then
+                log_to_file "[$name] YOLO STUCK: $YOLO_ATTEMPT_MAX attempts exhausted for $yolo_pr_key (human review needed)"
+                yolo_action="stuck"
+                can_merge=false
+              elif [ -n "$prev_yolo_at" ]; then
+                local yolo_cooldown_hours
+                yolo_cooldown_hours=$(hours_since "$prev_yolo_at")
+                if [ "$yolo_cooldown_hours" -lt "$YOLO_COOLDOWN_HOURS" ]; then
+                  local yolo_cooldown_ago
+                  yolo_cooldown_ago=$(time_ago "$prev_yolo_at")
+                  log_to_file "[$name] YOLO COOLDOWN: attempted $yolo_cooldown_ago (cooldown ${YOLO_COOLDOWN_HOURS}h)"
+                  yolo_action="cooldown"
+                  can_merge=false
+                fi
+              fi
+            fi
+
+            if [ "$can_merge" = "true" ]; then
+              log "[$name] YOLO MERGE attempt: $repo#$open_pr_num"
+              log_to_file "[$name] YOLO MERGE attempt: $repo#$open_pr_num"
+              local merge_out merge_exit=0
+              merge_out=$(gh pr merge "$open_pr_num" --repo "$repo" --squash --delete-branch 2>&1) || merge_exit=$?
+              log_to_file "[$name] YOLO merge output (exit $merge_exit): $merge_out"
+              # Record the attempt either way so cooldown/cap apply even on
+              # failed merges (otherwise we'd hammer GitHub on a broken PR).
+              state_record_yolo_attempt "$name" "$yolo_pr_key"
+              if [ "$merge_exit" -eq 0 ]; then
+                yolo_action="merged"
+              else
+                yolo_action="failed"
+              fi
+            fi
+          fi
+        fi
+
         log_to_file "[$name] SKIP: open PR #$open_pr_num in $repo"
         skip_project=true
         skip_reason="PR #$open_pr_num in progress ($repo)"
@@ -248,7 +416,23 @@ cmd_run() {
 
     # Handle skip
     if [ "$skip_project" = "true" ]; then
-      summary_rows+=("| $name | open PR | SKIP | $skip_reason |")
+      case "$yolo_action" in
+        merged)
+          summary_rows+=("| $name | yolo merged | SKIP | PR #$open_pr_num merged via YOLO, next phase next cycle |")
+          ;;
+        failed)
+          summary_rows+=("| $name | open PR | SKIP | YOLO merge failed on #$open_pr_num (see logs) |")
+          ;;
+        cooldown)
+          summary_rows+=("| $name | open PR | SKIP | YOLO cooldown on #$open_pr_num |")
+          ;;
+        stuck)
+          summary_rows+=("| $name | open PR | SKIP | YOLO stuck on #$open_pr_num |")
+          ;;
+        *)
+          summary_rows+=("| $name | open PR | SKIP | $skip_reason |")
+          ;;
+      esac
       continue
     fi
 
@@ -345,6 +529,7 @@ cmd_status() {
     name=$(echo "$project" | jq -r '.name')
     project_prefix=$(echo "$project" | jq -r '.branch_prefix // empty')
     project_target_branch=$(echo "$project" | jq -r '.target_branch // empty')
+    yolo=$(echo "$project" | jq -r '.yolo // false')
     paused=$(echo "$project" | jq -r '.paused')
 
     if [ "$paused" = "true" ]; then
@@ -354,6 +539,7 @@ cmd_status() {
 
     local repos=$(echo "$project" | jq -c '.repos[]')
     local status_text="idle"
+    [ "$yolo" = "true" ] && status_text="idle yolo"
     local best_merge_date=""
     local best_merge_hours=999999
 
@@ -370,7 +556,11 @@ cmd_status() {
       open_count=$(gh pr list --repo "$repo" --state open --search "$search_filter" --json number 2>/dev/null | jq 'length' 2>/dev/null || echo "0")
 
       if [ "$open_count" -gt 0 ]; then
-        status_text="PR open"
+        if [ "$yolo" = "true" ]; then
+          status_text="PR open yolo"
+        else
+          status_text="PR open"
+        fi
       fi
 
       # Last merged PR (track most recent across repos)
@@ -623,8 +813,8 @@ cmd_logs() {
 }
 
 _append_project_to_registry() {
-  local name="$1" trigger_id="$2" branch_prefix="$3" target_branch="$4"
-  shift 4
+  local name="$1" trigger_id="$2" branch_prefix="$3" target_branch="$4" yolo="$5"
+  shift 5
   local -a repos=("$@")
 
   if [ -z "$name" ]; then
@@ -672,6 +862,10 @@ _append_project_to_registry() {
     project_json=$(echo "$project_json" | jq --arg t "$target_branch" '. + {target_branch: $t}')
   fi
 
+  if [ "$yolo" = "true" ]; then
+    project_json=$(echo "$project_json" | jq '. + {yolo: true}')
+  fi
+
   jq --argjson proj "$project_json" '.projects += [$proj]' "$PROJECTS_FILE" > "$PROJECTS_FILE.tmp" \
     && mv "$PROJECTS_FILE.tmp" "$PROJECTS_FILE"
 
@@ -682,7 +876,7 @@ _append_project_to_registry() {
 cmd_add() {
   shift  # remove "add" from args
 
-  local name="" trigger_id="" branch_prefix="" target_branch=""
+  local name="" trigger_id="" branch_prefix="" target_branch="" yolo="false"
   local -a repos=()
 
   while [[ $# -gt 0 ]]; do
@@ -692,9 +886,10 @@ cmd_add() {
       --trigger)    trigger_id="$2"; shift 2 ;;
       --prefix)     branch_prefix="$2"; shift 2 ;;
       --base)       target_branch="$2"; shift 2 ;;
+      --yolo)       yolo="true"; shift ;;
       *)
         echo "Unknown option: $1"
-        echo "Usage: cpm add --name <name> --repo <owner/repo> [--repo <owner/repo>] --trigger <trigger_id> [--prefix <branch_prefix>] [--base <target_branch>]"
+        echo "Usage: cpm add --name <name> --repo <owner/repo> [--repo <owner/repo>] --trigger <trigger_id> [--prefix <branch_prefix>] [--base <target_branch>] [--yolo]"
         exit 1
         ;;
     esac
@@ -709,10 +904,13 @@ cmd_add() {
     read "trigger_id?Trigger ID (trig_...): "
     read "branch_prefix?Branch prefix [claude/]: "
     read "target_branch?Target branch (leave blank for any): "
+    local yolo_input=""
+    read "yolo_input?Enable YOLO auto-merge? [y/N]: "
+    [[ "$yolo_input" =~ ^[Yy] ]] && yolo="true"
   fi
 
   local result
-  result=$(_append_project_to_registry "$name" "$trigger_id" "$branch_prefix" "$target_branch" "${repos[@]}") || exit 1
+  result=$(_append_project_to_registry "$name" "$trigger_id" "$branch_prefix" "$target_branch" "$yolo" "${repos[@]}") || exit 1
 
   echo "Added project: $name"
   echo "$result" | jq .
@@ -810,6 +1008,39 @@ cmd_resume() {
   echo "Resumed '$name'"
 }
 
+# --- Subcommand: yolo ---
+cmd_yolo() {
+  local name="${2:-}"
+  local action="${3:-}"
+
+  if [ -z "$name" ] || [ -z "$action" ]; then
+    echo "Usage: cpm yolo <name> on|off"
+    exit 1
+  fi
+
+  local value
+  case "$action" in
+    on)  value="true" ;;
+    off) value="false" ;;
+    *)
+      echo "Usage: cpm yolo <name> on|off"
+      exit 1
+      ;;
+  esac
+
+  if ! jq -e --arg n "$name" '.projects[] | select(.name == $n)' "$PROJECTS_FILE" >/dev/null 2>&1; then
+    echo "Error: project '$name' not found"
+    exit 1
+  fi
+
+  jq --arg n "$name" --argjson v "$value" \
+    '(.projects[] | select(.name == $n) | .yolo) = $v' \
+    "$PROJECTS_FILE" > "$PROJECTS_FILE.tmp" \
+    && mv "$PROJECTS_FILE.tmp" "$PROJECTS_FILE"
+
+  echo "YOLO mode $action for '$name'"
+}
+
 # --- Subcommand: trigger ---
 cmd_trigger() {
   local name="${2:-}"
@@ -853,6 +1084,7 @@ case "${1:-help}" in
   remove) cmd_remove "$@" ;;
   pause)  cmd_pause "$@" ;;
   resume) cmd_resume "$@" ;;
+  yolo)   cmd_yolo "$@" ;;
   trigger) cmd_trigger "$@" ;;
   help|--help|-h)
     echo "Usage: cpm <command>"
@@ -872,10 +1104,11 @@ case "${1:-help}" in
     echo "  remove   Remove a project from the registry"
     echo "  pause    Pause a project (skip during cpm runs)"
     echo "  resume   Resume a paused project"
+    echo "  yolo     Toggle YOLO auto-merge for a project (cpm yolo <name> on|off)"
     echo "  trigger  Manually dispatch a project's routine"
     echo ""
     echo "Add usage:"
-    echo "  cpm add --name <name> --repo <owner/repo> [--repo <owner/repo>] --trigger <trigger_id> [--prefix <branch_prefix>] [--base <target_branch>]"
+    echo "  cpm add --name <name> --repo <owner/repo> [--repo <owner/repo>] --trigger <trigger_id> [--prefix <branch_prefix>] [--base <target_branch>] [--yolo]"
     echo ""
     ;;
   *)

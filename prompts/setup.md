@@ -58,6 +58,12 @@ You are working on the <PROJECT_NAME> project. cpm fired you because a phase PR 
 7. Stop. Do not start the next phase. cpm will fire you again automatically after this PR merges.
 
 If no phase has status `Pending`, output `All phases complete` and exit.
+
+When you push commits that respond to GitHub Copilot review comments on a phase PR, the final commit of your response MUST include this trailer in the commit message body:
+
+    Copilot-Addressed: yes
+
+cpm uses this marker to know Copilot's feedback has been integrated before auto-merging in YOLO mode. Omitting the trailer means the PR will not auto-merge even if all other gates pass.
 [END ROUTINE PROMPT]
 ```
 
