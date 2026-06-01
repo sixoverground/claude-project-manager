@@ -189,6 +189,7 @@ Each project entry defines the repos to monitor and the routine to dispatch.
 | `trigger_id`    | Yes | The routine's trigger ID (`trig_...`). |
 | `branch_prefix` | No  | Branch prefix to monitor. Default: `claude/`. |
 | `target_branch` | No  | Base branch the phase PRs target (passed as `base:` to `gh pr list`). When unset, cpm matches PRs against any base, which preserves the original behavior. Set this when your project merges into something other than the default branch (e.g. `develop`, `release/2026`). |
+| `yolo`          | No  | `true` to auto-merge phase PRs once the [YOLO gates](#yolo-mode) pass. Default: `false`. Toggle at runtime with `cpm yolo <name> on\|off`. |
 | `paused`        | No  | `true` to skip this project. Default: `false`. |
 
 Each repo entry can override `branch_prefix` or `target_branch` if repos within a project use different conventions.
@@ -223,6 +224,20 @@ Decision matrix:
 **Exception:** if a PR was merged more than 4 hours ago with no open PR and no recent activity, `cpm` dispatches anyway. The previous run may have failed.
 
 State is kept in `.cpm-state.json` (gitignored) to track dispatch counts per PR. See [CLAUDE.md](CLAUDE.md) for the full operational narrative.
+
+### YOLO mode
+
+YOLO mode (`"yolo": true` on a project) tells cpm to auto-merge a phase PR as soon as five gates pass. Until all five pass, cpm SKIPs as usual.
+
+1. **Not draft.** The PR is not a draft.
+2. **No blocking labels.** None of `do-not-merge`, `wip`, `blocked` are applied.
+3. **CI green.** Every check on the PR has succeeded. A PR with zero configured checks is refused (failsafe against misconfigured CI).
+4. **No `CHANGES_REQUESTED` reviews outstanding.** Anyone (human, Copilot, other bots) can block by requesting changes.
+5. **Copilot acknowledged.** Copilot has reviewed the PR at least once, AND a commit on the PR carries the trailer `Copilot-Addressed: yes` with a timestamp newer than Copilot's latest review.
+
+When all five pass, cpm runs `gh pr merge <pr> --squash --delete-branch` and records the attempt. The next cpm cycle detects the merged PR via the normal path and dispatches the next phase.
+
+YOLO attempts are deduped (5 max per PR, 1h cooldown between attempts). If a PR exhausts the cap without merging, cpm logs `YOLO STUCK` and surfaces it in `cpm status` for human review. Disable at any time with `cpm yolo <name> off`.
 
 ## Troubleshooting
 
