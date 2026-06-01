@@ -164,6 +164,7 @@ cmd_run() {
     name=$(echo "$project" | jq -r '.name')
     trigger_id=$(echo "$project" | jq -r '.trigger_id')
     project_prefix=$(echo "$project" | jq -r '.branch_prefix // empty')
+    project_target_branch=$(echo "$project" | jq -r '.target_branch // empty')
     paused=$(echo "$project" | jq -r '.paused')
 
     # Skip paused projects
@@ -186,11 +187,16 @@ cmd_run() {
     while IFS= read -r repo_entry; do
       repo=$(echo "$repo_entry" | jq -r '.repo')
       repo_prefix=$(echo "$repo_entry" | jq -r '.branch_prefix // empty')
+      repo_target_branch=$(echo "$repo_entry" | jq -r '.target_branch // empty')
       # Resolve branch prefix: per-repo > project-level > default
       local branch_prefix="${repo_prefix:-${project_prefix:-$DEFAULT_BRANCH_PREFIX}}"
+      # Resolve target branch: per-repo > project-level > none (default = any base)
+      local target_branch="${repo_target_branch:-${project_target_branch:-}}"
+      local search_filter="head:$branch_prefix"
+      [ -n "$target_branch" ] && search_filter="$search_filter base:$target_branch"
 
       # Step 1: Check for open phase PR
-      open_prs=$(gh pr list --repo "$repo" --state open --search "head:$branch_prefix" --json number,headRefName 2>/dev/null || echo "[]")
+      open_prs=$(gh pr list --repo "$repo" --state open --search "$search_filter" --json number,headRefName,baseRefName 2>/dev/null || echo "[]")
       open_count=$(echo "$open_prs" | jq 'length')
 
       if [ "$open_count" -gt 0 ]; then
@@ -202,7 +208,7 @@ cmd_run() {
       fi
 
       # Step 2: Check for recently merged phase PR (track best across repos)
-      last_merged=$(gh pr list --repo "$repo" --state merged --search "head:$branch_prefix" --json number,mergedAt,headRefName --jq 'sort_by(.mergedAt) | last' 2>/dev/null || echo "null")
+      last_merged=$(gh pr list --repo "$repo" --state merged --search "$search_filter" --json number,mergedAt,headRefName,baseRefName --jq 'sort_by(.mergedAt) | last' 2>/dev/null || echo "null")
 
       if [ "$last_merged" != "null" ] && [ -n "$last_merged" ]; then
         merged_at=$(echo "$last_merged" | jq -r '.mergedAt')
@@ -338,6 +344,7 @@ cmd_status() {
   while IFS= read -r project; do
     name=$(echo "$project" | jq -r '.name')
     project_prefix=$(echo "$project" | jq -r '.branch_prefix // empty')
+    project_target_branch=$(echo "$project" | jq -r '.target_branch // empty')
     paused=$(echo "$project" | jq -r '.paused')
 
     if [ "$paused" = "true" ]; then
@@ -353,17 +360,21 @@ cmd_status() {
     while IFS= read -r repo_entry; do
       repo=$(echo "$repo_entry" | jq -r '.repo')
       repo_prefix=$(echo "$repo_entry" | jq -r '.branch_prefix // empty')
+      repo_target_branch=$(echo "$repo_entry" | jq -r '.target_branch // empty')
       local branch_prefix="${repo_prefix:-${project_prefix:-$DEFAULT_BRANCH_PREFIX}}"
+      local target_branch="${repo_target_branch:-${project_target_branch:-}}"
+      local search_filter="head:$branch_prefix"
+      [ -n "$target_branch" ] && search_filter="$search_filter base:$target_branch"
 
       # Check open PRs
-      open_count=$(gh pr list --repo "$repo" --state open --search "head:$branch_prefix" --json number 2>/dev/null | jq 'length' 2>/dev/null || echo "0")
+      open_count=$(gh pr list --repo "$repo" --state open --search "$search_filter" --json number 2>/dev/null | jq 'length' 2>/dev/null || echo "0")
 
       if [ "$open_count" -gt 0 ]; then
         status_text="PR open"
       fi
 
       # Last merged PR (track most recent across repos)
-      last_merged=$(gh pr list --repo "$repo" --state merged --search "head:$branch_prefix" --json mergedAt --jq 'sort_by(.mergedAt) | last | .mergedAt' 2>/dev/null || echo "")
+      last_merged=$(gh pr list --repo "$repo" --state merged --search "$search_filter" --json mergedAt --jq 'sort_by(.mergedAt) | last | .mergedAt' 2>/dev/null || echo "")
 
       if [ -n "$last_merged" ] && [ "$last_merged" != "null" ]; then
         hours_ago=$(hours_since "$last_merged")
@@ -612,8 +623,8 @@ cmd_logs() {
 }
 
 _append_project_to_registry() {
-  local name="$1" trigger_id="$2" branch_prefix="$3"
-  shift 3
+  local name="$1" trigger_id="$2" branch_prefix="$3" target_branch="$4"
+  shift 4
   local -a repos=("$@")
 
   if [ -z "$name" ]; then
@@ -657,6 +668,10 @@ _append_project_to_registry() {
     project_json=$(echo "$project_json" | jq --arg p "$branch_prefix" '. + {branch_prefix: $p}')
   fi
 
+  if [ -n "$target_branch" ]; then
+    project_json=$(echo "$project_json" | jq --arg t "$target_branch" '. + {target_branch: $t}')
+  fi
+
   jq --argjson proj "$project_json" '.projects += [$proj]' "$PROJECTS_FILE" > "$PROJECTS_FILE.tmp" \
     && mv "$PROJECTS_FILE.tmp" "$PROJECTS_FILE"
 
@@ -667,7 +682,7 @@ _append_project_to_registry() {
 cmd_add() {
   shift  # remove "add" from args
 
-  local name="" trigger_id="" branch_prefix=""
+  local name="" trigger_id="" branch_prefix="" target_branch=""
   local -a repos=()
 
   while [[ $# -gt 0 ]]; do
@@ -676,9 +691,10 @@ cmd_add() {
       --repo)       repos+=("$2"); shift 2 ;;
       --trigger)    trigger_id="$2"; shift 2 ;;
       --prefix)     branch_prefix="$2"; shift 2 ;;
+      --base)       target_branch="$2"; shift 2 ;;
       *)
         echo "Unknown option: $1"
-        echo "Usage: cpm add --name <name> --repo <owner/repo> [--repo <owner/repo>] --trigger <trigger_id> [--prefix <branch_prefix>]"
+        echo "Usage: cpm add --name <name> --repo <owner/repo> [--repo <owner/repo>] --trigger <trigger_id> [--prefix <branch_prefix>] [--base <target_branch>]"
         exit 1
         ;;
     esac
@@ -692,10 +708,11 @@ cmd_add() {
     repos=("${(@s: :)repos_input}")
     read "trigger_id?Trigger ID (trig_...): "
     read "branch_prefix?Branch prefix [claude/]: "
+    read "target_branch?Target branch (leave blank for any): "
   fi
 
   local result
-  result=$(_append_project_to_registry "$name" "$trigger_id" "$branch_prefix" "${repos[@]}") || exit 1
+  result=$(_append_project_to_registry "$name" "$trigger_id" "$branch_prefix" "$target_branch" "${repos[@]}") || exit 1
 
   echo "Added project: $name"
   echo "$result" | jq .
@@ -858,7 +875,7 @@ case "${1:-help}" in
     echo "  trigger  Manually dispatch a project's routine"
     echo ""
     echo "Add usage:"
-    echo "  cpm add --name <name> --repo <owner/repo> [--repo <owner/repo>] --trigger <trigger_id> [--prefix <branch_prefix>]"
+    echo "  cpm add --name <name> --repo <owner/repo> [--repo <owner/repo>] --trigger <trigger_id> [--prefix <branch_prefix>] [--base <target_branch>]"
     echo ""
     ;;
   *)

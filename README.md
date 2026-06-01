@@ -188,9 +188,10 @@ Each project entry defines the repos to monitor and the routine to dispatch.
 | `repos`         | Yes | Array of `{ "repo": "owner/name" }` objects. |
 | `trigger_id`    | Yes | The routine's trigger ID (`trig_...`). |
 | `branch_prefix` | No  | Branch prefix to monitor. Default: `claude/`. |
+| `target_branch` | No  | Base branch the phase PRs target (passed as `base:` to `gh pr list`). When unset, cpm matches PRs against any base, which preserves the original behavior. Set this when your project merges into something other than the default branch (e.g. `develop`, `release/2026`). |
 | `paused`        | No  | `true` to skip this project. Default: `false`. |
 
-Each repo entry can also override `branch_prefix` if repos within a project use different conventions.
+Each repo entry can override `branch_prefix` or `target_branch` if repos within a project use different conventions.
 
 ### Multi-repo projects
 
