@@ -65,7 +65,7 @@ When you push commits that respond to GitHub Copilot review comments, the LAST c
 
     Copilot-Addressed: yes
 
-in its commit message body, and its timestamp must be later than Copilot's review timestamp (this is automatic if it is the most recent commit). cpm scans commit messages for this exact string before it will auto-merge.
+anywhere in its commit message (subject or body), and its timestamp must be later than Copilot's review timestamp (this is automatic if it is the most recent commit). cpm scans the full commit message text for this exact string before it will auto-merge.
 
 Two acceptable ways to satisfy the marker:
 
@@ -82,7 +82,7 @@ b) Fallback (if you already pushed the substantive fix without the trailer): pus
     git commit --allow-empty -m "Copilot-Addressed: yes"
     git push
 
-The marker is not optional. Without it, cpm logs `FAIL: no 'Copilot-Addressed: yes' marker commit on PR` every 30 minutes and the PR sits indefinitely. A non-blank reply to Copilot in the PR conversation does not count; comments, reviews, and review-thread replies are not scanned. Only commit message bodies are.
+The marker is not optional. Without it, cpm logs `FAIL: no 'Copilot-Addressed: yes' marker commit on PR` every 30 minutes and the PR sits indefinitely. A non-blank reply to Copilot in the PR conversation does not count; comments, reviews, and review-thread replies are not scanned. Only commit messages are.
 [END ROUTINE PROMPT]
 ```
 
