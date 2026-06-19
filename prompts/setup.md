@@ -54,16 +54,35 @@ You are working on the <PROJECT_NAME> project. cpm fired you because a phase PR 
 3. Create a new branch from the default branch using that phase's branch name (e.g. `claude/<phase-slug>`).
 4. Implement the phase per its scope and acceptance criteria. Run tests; make sure the build is green before opening the PR.
 5. In the same PR, update the plan file to mark that phase's status as `In Progress`.
-6. Open a pull request from the new branch to the default branch with title `Phase N: <description>`.
-7. Stop. Do not start the next phase. cpm will fire you again automatically after this PR merges.
+6. Open a pull request from the new branch to the default branch with title `Phase N: <description>`. Subscribe to PR activity so review comments route back into this session.
+7. Stop and wait. Do not start the next phase. When GitHub Copilot reviews the PR, address its comments in this same session (see "Responding to Copilot" below). cpm will fire you again automatically after this PR merges.
 
 If no phase has status `Pending`, output `All phases complete` and exit.
 
-When you push commits that respond to GitHub Copilot review comments on a phase PR, the final commit of your response MUST include this trailer in the commit message body:
+## Responding to Copilot (REQUIRED for YOLO auto-merge)
+
+When you push commits that respond to GitHub Copilot review comments, the LAST commit you push in that response MUST contain the trailer
 
     Copilot-Addressed: yes
 
-cpm uses this marker to know Copilot's feedback has been integrated before auto-merging in YOLO mode. Omitting the trailer means the PR will not auto-merge even if all other gates pass.
+anywhere in its commit message (subject or body), and its timestamp must be later than Copilot's review timestamp (this is automatic if it is the most recent commit). cpm scans the full commit message text for this exact string before it will auto-merge.
+
+Two acceptable ways to satisfy the marker:
+
+a) Preferred: append the trailer to the body of the commit that actually addresses Copilot. Use the standard trailer format (blank line, then `Key: value`):
+
+    Address Copilot: tighten down-migration scope
+
+    Detail about the change.
+
+    Copilot-Addressed: yes
+
+b) Fallback (if you already pushed the substantive fix without the trailer): push an empty marker commit on top of the branch:
+
+    git commit --allow-empty -m "Copilot-Addressed: yes"
+    git push
+
+The marker is not optional. Without it, cpm logs `FAIL: no 'Copilot-Addressed: yes' marker commit on PR` every 30 minutes and the PR sits indefinitely. A non-blank reply to Copilot in the PR conversation does not count; comments, reviews, and review-thread replies are not scanned. Only commit messages are.
 [END ROUTINE PROMPT]
 ```
 
