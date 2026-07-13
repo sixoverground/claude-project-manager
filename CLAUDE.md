@@ -96,7 +96,11 @@ All five gates must pass before cpm calls `gh pr merge`:
 2. **No blocking labels.** PR carries none of `do-not-merge`, `wip`, `blocked` (hardcoded for now).
 3. **CI green.** `gh pr checks <pr> --json state` has zero `PENDING|IN_PROGRESS|QUEUED` rows and every other row is either `SUCCESS` or `SKIPPED`. Any other state (`FAILURE`, `ERROR`, `CANCELLED`, `TIMED_OUT`, `NEUTRAL`, `ACTION_REQUIRED`, `STARTUP_FAILURE`, `STALE`) blocks. At least one check must exist (zero checks is treated as failsafe-block).
 4. **No `CHANGES_REQUESTED` outstanding.** For each reviewer, only their latest review counts. The check passes when no reviewer's most recent review is `CHANGES_REQUESTED` (which means a CHANGES_REQUESTED that the same reviewer later superseded with an APPROVE or COMMENT no longer blocks).
-5. **Copilot acknowledged.** The latest review submitted by `copilot-pull-request-reviewer[bot]` (or `github-copilot[bot]`, or `Copilot`) has a `submitted_at` timestamp older than the latest commit on the PR whose message contains `Copilot-Addressed: yes`. If Copilot has never reviewed, gate 5 fails (cpm waits).
+5. **AI reviewer satisfied.** Reviewer-agnostic and anchored to the reviewed commit SHA (no timestamps, no marker commits). Gate 5 passes when BOTH hold, via a single GraphQL query for `headRefOid`, `reviews { author.login, commit.oid }`, and `reviewThreads { isResolved }`:
+   - A configured reviewer login has a review whose `commit.oid == headRefOid` (the reviewer evaluated the current head). Login matching is case-insensitive and strips a trailing `[bot]`, because GraphQL reports bot actors without that suffix.
+   - Every `reviewThread` on the PR has `isResolved == true`.
+
+   The reviewer login list is configured per project via `yolo_reviewer` (repo-overridable). Omitted defaults to Copilot (`copilot-pull-request-reviewer`, `github-copilot`, `copilot`). `"yolo_reviewer": false` skips gate 5 entirely. Because only diff-anchored review comments form resolvable threads, the reviewer must post **inline** review comments (Copilot does natively; Claude's review workflow must be set to inline review submission), and re-review-on-push should be enabled so `commit.oid` tracks the head (Copilot: "Review new pushes" ruleset; Claude: `synchronize` trigger). The dispatched routine addresses each thread and resolves it via the `resolveReviewThread` GraphQL mutation; a human can un-resolve to block.
 
 ### State + dedup
 

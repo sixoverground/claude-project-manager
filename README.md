@@ -191,9 +191,10 @@ Each project entry defines the repos to monitor and the routine to dispatch.
 | `branch_prefix` | No  | Branch prefix to monitor. Default: `claude/`. |
 | `target_branch` | No  | Base branch the phase PRs target (passed as `base:` to `gh pr list`). When unset, cpm matches PRs against any base, which preserves the original behavior. Set this when your project merges into something other than the default branch (e.g. `develop`, `release/2026`). |
 | `yolo`          | No  | `true` to auto-merge phase PRs once the [YOLO gates](#yolo-mode) pass. Default: `false`. Toggle at runtime with `cpm yolo <name> on\|off`. |
+| `yolo_reviewer` | No  | Which AI reviewer gate 5 requires. An object `{ "logins": ["claude"] }` lists the reviewer GitHub login slugs (matching is case-insensitive and ignores a trailing `[bot]`). Omitted defaults to GitHub Copilot (`copilot-pull-request-reviewer`, `github-copilot`, `copilot`). Set to `false` to skip gate 5 entirely. See [YOLO mode](#yolo-mode). |
 | `paused`        | No  | `true` to skip this project. Default: `false`. |
 
-Each repo entry can override `branch_prefix` or `target_branch` if repos within a project use different conventions.
+Each repo entry can override `branch_prefix`, `target_branch`, or `yolo_reviewer` if repos within a project use different conventions.
 
 ### Editing a project
 
@@ -254,7 +255,13 @@ YOLO mode (`"yolo": true` on a project) tells cpm to auto-merge a phase PR as so
 2. **No blocking labels.** None of `do-not-merge`, `wip`, `blocked` are applied.
 3. **CI green.** Every check on the PR is either `SUCCESS` or `SKIPPED`. Anything else (pending, failing, `NEUTRAL`, `ACTION_REQUIRED`, etc.) blocks. A PR with zero configured checks is also refused (failsafe against misconfigured CI).
 4. **No `CHANGES_REQUESTED` reviews outstanding.** Each reviewer's most recent review is what counts: a CHANGES_REQUESTED that the same reviewer later replaced with an APPROVE no longer blocks. Anyone (human, Copilot, other bots) can block by requesting changes.
-5. **Copilot acknowledged.** Copilot has reviewed the PR at least once, AND a commit on the PR carries the trailer `Copilot-Addressed: yes` with a timestamp newer than Copilot's latest review.
+5. **AI reviewer satisfied.** A configured reviewer has reviewed the **current head commit** (cpm compares the reviewed commit SHA to the PR head, so a review of an older commit does not count), AND every review thread on the PR is resolved. This is reviewer-agnostic: it works for Copilot, Claude, or any bot whose feedback lands as inline (diff-anchored) review comments. Which reviewer counts is set by [`yolo_reviewer`](#projectsjson) and defaults to Copilot; `"yolo_reviewer": false` skips this gate.
+
+   For this gate to work, the reviewer must post **inline** review comments (only those form resolvable threads) and should **re-review on every push** so its reviewed SHA tracks the head:
+   - **Copilot:** enable automatic review with the "Review new pushes" subsetting in a repository ruleset.
+   - **Claude (claude-code-action):** post inline review comments as a formal review (not a single top-level summary comment), and keep the `synchronize` trigger.
+
+   The dispatched routine addresses each comment and marks the thread resolved via the `resolveReviewThread` GraphQL mutation; a human can un-resolve a thread to block the merge.
 
 When all five pass, cpm runs `gh pr merge <pr> --squash --delete-branch` and records the attempt. The next cpm cycle detects the merged PR via the normal path and dispatches the next phase.
 
