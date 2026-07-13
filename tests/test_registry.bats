@@ -110,3 +110,101 @@ setup() {
   run jq '.projects | length' "$CPM_DATA/projects.json"
   [ "$output" = "2" ]
 }
+
+# --- _update_project_in_registry ---
+
+# Seed a project with prefix + base + yolo for update tests.
+seed_updatable() {
+  cpm_eval "_append_project_to_registry myapp trig_abc 'cpm/notes/' 'feature/notes' true yourorg/myapp" >/dev/null
+}
+
+@test "_update_project_in_registry changes branch_prefix and target_branch" {
+  seed_updatable
+  cpm_eval "_update_project_in_registry myapp __CPM_KEEP__ __CPM_KEEP__ 'cpm/tasks/' 'feature/tasks' __CPM_KEEP__ __CPM_KEEP__" >/dev/null
+  run jq -r '.projects[0].branch_prefix' "$CPM_DATA/projects.json"
+  [ "$output" = "cpm/tasks/" ]
+  run jq -r '.projects[0].target_branch' "$CPM_DATA/projects.json"
+  [ "$output" = "feature/tasks" ]
+}
+
+@test "_update_project_in_registry leaves untouched fields alone" {
+  seed_updatable
+  cpm_eval "_update_project_in_registry myapp __CPM_KEEP__ __CPM_KEEP__ 'cpm/tasks/' __CPM_KEEP__ __CPM_KEEP__ __CPM_KEEP__" >/dev/null
+  run jq -r '.projects[0].target_branch' "$CPM_DATA/projects.json"
+  [ "$output" = "feature/notes" ]
+  run jq -r '.projects[0].trigger_id' "$CPM_DATA/projects.json"
+  [ "$output" = "trig_abc" ]
+}
+
+@test "_update_project_in_registry clears branch_prefix on empty string" {
+  seed_updatable
+  cpm_eval "_update_project_in_registry myapp __CPM_KEEP__ __CPM_KEEP__ '' __CPM_KEEP__ __CPM_KEEP__ __CPM_KEEP__" >/dev/null
+  run jq '.projects[0] | has("branch_prefix")' "$CPM_DATA/projects.json"
+  [ "$output" = "false" ]
+}
+
+@test "_update_project_in_registry clears target_branch on empty string" {
+  seed_updatable
+  cpm_eval "_update_project_in_registry myapp __CPM_KEEP__ __CPM_KEEP__ __CPM_KEEP__ '' __CPM_KEEP__ __CPM_KEEP__" >/dev/null
+  run jq '.projects[0] | has("target_branch")' "$CPM_DATA/projects.json"
+  [ "$output" = "false" ]
+}
+
+@test "_update_project_in_registry updates trigger_id" {
+  seed_updatable
+  cpm_eval "_update_project_in_registry myapp __CPM_KEEP__ trig_new __CPM_KEEP__ __CPM_KEEP__ __CPM_KEEP__ __CPM_KEEP__" >/dev/null
+  run jq -r '.projects[0].trigger_id' "$CPM_DATA/projects.json"
+  [ "$output" = "trig_new" ]
+}
+
+@test "_update_project_in_registry renames a project" {
+  seed_updatable
+  cpm_eval "_update_project_in_registry myapp renamed __CPM_KEEP__ __CPM_KEEP__ __CPM_KEEP__ __CPM_KEEP__ __CPM_KEEP__" >/dev/null
+  run jq -r '.projects[0].name' "$CPM_DATA/projects.json"
+  [ "$output" = "renamed" ]
+}
+
+@test "_update_project_in_registry replaces the repos array" {
+  seed_updatable
+  cpm_eval "_update_project_in_registry myapp __CPM_KEEP__ __CPM_KEEP__ __CPM_KEEP__ __CPM_KEEP__ __CPM_KEEP__ '[{\"repo\":\"o/web\"},{\"repo\":\"o/ios\"}]'" >/dev/null
+  run jq '.projects[0].repos | length' "$CPM_DATA/projects.json"
+  [ "$output" = "2" ]
+  run jq -r '.projects[0].repos[1].repo' "$CPM_DATA/projects.json"
+  [ "$output" = "o/ios" ]
+}
+
+@test "_update_project_in_registry toggles yolo off" {
+  seed_updatable
+  cpm_eval "_update_project_in_registry myapp __CPM_KEEP__ __CPM_KEEP__ __CPM_KEEP__ __CPM_KEEP__ false __CPM_KEEP__" >/dev/null
+  run jq -r '.projects[0].yolo' "$CPM_DATA/projects.json"
+  [ "$output" = "false" ]
+}
+
+@test "_update_project_in_registry rejects unknown project" {
+  seed_updatable
+  run cpm_eval "_update_project_in_registry ghost __CPM_KEEP__ trig_x __CPM_KEEP__ __CPM_KEEP__ __CPM_KEEP__ __CPM_KEEP__"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not found"* ]]
+}
+
+@test "_update_project_in_registry rejects rename onto existing project" {
+  cpm_eval "_append_project_to_registry alpha trig_a '' '' false o/a" >/dev/null
+  cpm_eval "_append_project_to_registry beta trig_b '' '' false o/b" >/dev/null
+  run cpm_eval "_update_project_in_registry alpha beta __CPM_KEEP__ __CPM_KEEP__ __CPM_KEEP__ __CPM_KEEP__ __CPM_KEEP__"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"already exists"* ]]
+}
+
+@test "_update_project_in_registry rejects blanking trigger_id" {
+  seed_updatable
+  run cpm_eval "_update_project_in_registry myapp __CPM_KEEP__ '' __CPM_KEEP__ __CPM_KEEP__ __CPM_KEEP__ __CPM_KEEP__"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"trigger_id cannot be empty"* ]]
+}
+
+@test "_update_project_in_registry rejects empty repos replacement" {
+  seed_updatable
+  run cpm_eval "_update_project_in_registry myapp __CPM_KEEP__ __CPM_KEEP__ __CPM_KEEP__ __CPM_KEEP__ __CPM_KEEP__ '[]'"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"at least one repo"* ]]
+}
