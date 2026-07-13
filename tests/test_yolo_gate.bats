@@ -8,20 +8,24 @@ setup() {
 }
 
 # Write a GraphQL pullRequest response fixture to $GQL.
-# Usage: write_gql <headOid> <reviewsJson> <threadsJson>
+# Usage: write_gql <headOid> <reviewsJson> <threadsJson> [checkRunsJson]
+# The head commit's check runs default to [] when omitted.
 write_gql() {
+  local checks="${4:-[]}"
   cat > "$GQL" <<EOF
 {"data":{"repository":{"pullRequest":{
   "headRefOid": "$1",
   "reviews": {"nodes": $2},
-  "reviewThreads": {"nodes": $3}
+  "reviewThreads": {"nodes": $3},
+  "commits": {"nodes": [{"commit": {"oid": "$1", "checkSuites": {"nodes": [{"checkRuns": {"nodes": $checks}}]}}}]}
 }}}}
 EOF
 }
 
 # Run the pure gate helper against the fixture file.
+# Usage: gate <loginsCsv> [checkName]
 gate() {
-  run cpm_eval "_yolo_gate_reviewed \"\$(cat '$GQL')\" '$1'"
+  run cpm_eval "_yolo_gate_reviewed \"\$(cat '$GQL')\" '$1' '${2:-}'"
 }
 
 HEAD="abc123def456abc123def456abc123def456abcd"
@@ -59,6 +63,49 @@ OLD="0000000000000000000000000000000000000000"
     '[{"isResolved":true,"comments":{"nodes":[{"author":{"login":"claude"},"commit":{"oid":"'"$OLD"'"}}]}}]'
   gate "claude"
   [[ "$output" == FAIL:*"evaluated current head"* ]]
+}
+
+@test "gate PASS: clean PR proven by a successful reviewer check run on head" {
+  write_gql "$HEAD" '[]' '[]' \
+    '[{"name":"claude-review","conclusion":"SUCCESS"}]'
+  gate "claude" "claude-review"
+  [ "$output" = "PASS" ]
+}
+
+@test "gate FAIL: check run present but no check name configured" {
+  write_gql "$HEAD" '[]' '[]' \
+    '[{"name":"claude-review","conclusion":"SUCCESS"}]'
+  gate "claude"
+  [[ "$output" == FAIL:*"evaluated current head"* ]]
+}
+
+@test "gate FAIL: reviewer check run did not succeed" {
+  write_gql "$HEAD" '[]' '[]' \
+    '[{"name":"claude-review","conclusion":"FAILURE"}]'
+  gate "claude" "claude-review"
+  [[ "$output" == FAIL:*"evaluated current head"* ]]
+}
+
+@test "gate FAIL: a different check succeeded but not the reviewer check" {
+  write_gql "$HEAD" '[]' '[]' \
+    '[{"name":"Analyze (ruby)","conclusion":"SUCCESS"}]'
+  gate "claude" "claude-review"
+  [[ "$output" == FAIL:*"evaluated current head"* ]]
+}
+
+@test "gate FAIL: reviewer check succeeded on head but a thread is unresolved" {
+  write_gql "$HEAD" '[]' \
+    '[{"isResolved":false}]' \
+    '[{"name":"claude-review","conclusion":"SUCCESS"}]'
+  gate "claude" "claude-review"
+  [[ "$output" == FAIL:*"unresolved review thread"* ]]
+}
+
+@test "gate check-name match is case-insensitive" {
+  write_gql "$HEAD" '[]' '[]' \
+    '[{"name":"Claude-Review","conclusion":"success"}]'
+  gate "claude" "claude-review"
+  [ "$output" = "PASS" ]
 }
 
 @test "gate FAIL: reviewer reviewed an old sha (stale)" {
