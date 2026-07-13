@@ -55,34 +55,32 @@ You are working on the <PROJECT_NAME> project. cpm fired you because a phase PR 
 4. Implement the phase per its scope and acceptance criteria. Run tests; make sure the build is green before opening the PR.
 5. In the same PR, update the plan file to mark that phase's status as `In Progress`.
 6. Open a pull request from the new branch to the default branch with title `Phase N: <description>`. Subscribe to PR activity so review comments route back into this session.
-7. Stop and wait. Do not start the next phase. When GitHub Copilot reviews the PR, address its comments in this same session (see "Responding to Copilot" below). cpm will fire you again automatically after this PR merges.
+7. Stop and wait. Do not start the next phase. When the AI reviewer reviews the PR, address its comments in this same session (see "Responding to the AI reviewer" below). cpm will fire you again automatically after this PR merges.
 
 If no phase has status `Pending`, output `All phases complete` and exit.
 
-## Responding to Copilot (REQUIRED for YOLO auto-merge)
+## Responding to the AI reviewer (REQUIRED for YOLO auto-merge)
 
-When you push commits that respond to GitHub Copilot review comments, the LAST commit you push in that response MUST contain the trailer
+An AI reviewer (GitHub Copilot, Claude, etc.) leaves feedback as inline review comments, which GitHub tracks as review threads. cpm auto-merges only when BOTH are true:
 
-    Copilot-Addressed: yes
+1. Every review thread on the PR is resolved.
+2. The reviewer has reviewed the CURRENT head commit (cpm compares the reviewed commit SHA to the PR head, so a review of an older commit does not count).
 
-anywhere in its commit message (subject or body), and its timestamp must be later than Copilot's review timestamp (this is automatic if it is the most recent commit). cpm scans the full commit message text for this exact string before it will auto-merge.
+Your job when the reviewer comments:
 
-Two acceptable ways to satisfy the marker:
+a) Push commits that address each inline comment. This causes the reviewer to re-review the new head (Copilot with "Review new pushes" enabled; Claude on every push), which keeps requirement 2 satisfied.
 
-a) Preferred: append the trailer to the body of the commit that actually addresses Copilot. Use the standard trailer format (blank line, then `Key: value`):
+b) Resolve every thread you addressed. Fetch the thread IDs and resolve each one:
 
-    Address Copilot: tighten down-migration scope
+    # list unresolved threads on the PR
+    gh api graphql -f query='query($o:String!,$n:String!,$pr:Int!){repository(owner:$o,name:$n){pullRequest(number:$pr){reviewThreads(first:100){nodes{id isResolved}}}}}' \
+      -F o=<owner> -F n=<repo> -F pr=<number> \
+      --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved==false) | .id'
 
-    Detail about the change.
+    # resolve one thread by its node id
+    gh api graphql -f query='mutation($t:ID!){resolveReviewThread(input:{threadId:$t}){thread{isResolved}}}' -F t=<threadId>
 
-    Copilot-Addressed: yes
-
-b) Fallback (if you already pushed the substantive fix without the trailer): push an empty marker commit on top of the branch:
-
-    git commit --allow-empty -m "Copilot-Addressed: yes"
-    git push
-
-The marker is not optional. Without it, cpm logs `FAIL: no 'Copilot-Addressed: yes' marker commit on PR` every 30 minutes and the PR sits indefinitely. A non-blank reply to Copilot in the PR conversation does not count; comments, reviews, and review-thread replies are not scanned. Only commit messages are.
+Only resolve a thread once you have actually addressed it. Do NOT resolve a thread you disagree with without either fixing it or leaving a reply explaining why; a human can un-resolve it to block the merge. cpm re-checks every 30 minutes and logs `FAIL: N unresolved review thread(s)` or `FAIL: no configured reviewer has evaluated current head <sha>` until both requirements are met.
 [END ROUTINE PROMPT]
 ```
 

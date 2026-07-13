@@ -47,7 +47,11 @@ DEFAULT_BRANCH_PREFIX="claude/"
 YOLO_ATTEMPT_MAX=5
 YOLO_COOLDOWN_HOURS=1
 YOLO_BLOCKING_LABELS="do-not-merge wip blocked"
-YOLO_MARKER="Copilot-Addressed: yes"
+# Gate 5 is reviewer-agnostic: it requires that a configured AI reviewer has
+# evaluated the current head commit and that every review thread is resolved.
+# Reviewer identity is a comma-separated list of GitHub login slugs; matching is
+# case-insensitive and tolerates a trailing "[bot]". Default = GitHub Copilot.
+DEFAULT_YOLO_REVIEWER_LOGINS="copilot-pull-request-reviewer,github-copilot,copilot"
 
 # Ensure PATH includes required binaries (critical for launchd)
 export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$HOME/.nvm/versions/node/v24.14.0/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -149,7 +153,7 @@ state_record_yolo_attempt() {
 # Returns 0 if all YOLO gates pass for this PR, non-zero otherwise. Reasons
 # are written to the daily log. Reads, no writes; safe to call repeatedly.
 _yolo_check_pr() {
-  local repo="$1" pr="$2" name="$3"
+  local repo="$1" pr="$2" name="$3" reviewer_logins="$4" reviewer_check="$5"
   local log_prefix="[$name] YOLO check $repo#$pr"
 
   # Gate 1: PR is not draft
@@ -204,37 +208,136 @@ _yolo_check_pr() {
     return 1
   fi
 
-  # Gate 5: Copilot has reviewed AND a Copilot-Addressed marker commit exists
-  # whose timestamp is newer than the latest Copilot review.
-  local copilot_filter='(.user.login=="copilot-pull-request-reviewer" or .user.login=="copilot-pull-request-reviewer[bot]" or .user.login=="github-copilot[bot]" or .user.login=="Copilot")'
-  local copilot_ts
-  copilot_ts=$(gh api "repos/$repo/pulls/$pr/reviews" \
-    --jq "[.[] | select($copilot_filter)] | sort_by(.submitted_at) | last | .submitted_at" 2>/dev/null)
-  if [ -z "$copilot_ts" ] || [ "$copilot_ts" = "null" ]; then
-    log_to_file "$log_prefix FAIL: Copilot has not reviewed yet"
-    return 1
+  # Gate 5: a configured AI reviewer has evaluated the current head AND every
+  # review thread on the PR is resolved. Reviewer-agnostic: any reviewer whose
+  # inline (diff-anchored) comments form resolvable threads works (Copilot,
+  # Claude, ...). "Reviewed the head" is proven by a review, an inline comment,
+  # OR a successful reviewer check run (yolo_reviewer.check) on the head commit;
+  # the last lets a CI-based reviewer prove a clean pass that leaves no comment.
+  # Everything is anchored to the head SHA, not to timestamps, so it is immune to
+  # clock skew and to reviewers that re-review on every push. "$reviewer_logins"
+  # == "__DISABLED__" skips the gate entirely.
+  if [ "$reviewer_logins" = "__DISABLED__" ]; then
+    log_to_file "$log_prefix gate 5 skipped (no reviewer configured)"
+    log_to_file "$log_prefix PASS: all gates green"
+    return 0
   fi
 
-  local marker_ts
-  marker_ts=$(gh api "repos/$repo/pulls/$pr/commits" \
-    --jq "[.[] | select(.commit.message | contains(\"$YOLO_MARKER\"))] | sort_by(.commit.committer.date) | last | .commit.committer.date" 2>/dev/null)
-  if [ -z "$marker_ts" ] || [ "$marker_ts" = "null" ]; then
-    log_to_file "$log_prefix FAIL: no '$YOLO_MARKER' marker commit on PR"
-    return 1
-  fi
+  local owner_name="${repo%/*}" repo_name="${repo#*/}"
+  local gql
+  gql=$(gh api graphql -f query='query($o:String!,$n:String!,$pr:Int!){repository(owner:$o,name:$n){pullRequest(number:$pr){headRefOid reviews(first:50){nodes{author{login} commit{oid}}} reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{author{login} commit{oid}}}}} commits(last:1){nodes{commit{oid checkSuites(first:20){nodes{checkRuns(first:100){nodes{name conclusion}}}}}}}}}}' \
+    -F o="$owner_name" -F n="$repo_name" -F pr="$pr" 2>/dev/null || echo "")
 
-  local copilot_clean="${copilot_ts%%.*}"; copilot_clean="${copilot_clean%Z}"
-  local marker_clean="${marker_ts%%.*}"; marker_clean="${marker_clean%Z}"
-  local copilot_epoch marker_epoch
-  copilot_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%S" "$copilot_clean" "+%s" 2>/dev/null || echo "0")
-  marker_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%S" "$marker_clean" "+%s" 2>/dev/null || echo "0")
-  if [ "$marker_epoch" -le "$copilot_epoch" ]; then
-    log_to_file "$log_prefix FAIL: marker commit ($marker_ts) is not newer than latest Copilot review ($copilot_ts)"
+  local gate5
+  gate5=$(_yolo_gate_reviewed "$gql" "$reviewer_logins" "$reviewer_check")
+  if [ "$gate5" != "PASS" ]; then
+    log_to_file "$log_prefix $gate5"
     return 1
   fi
 
   log_to_file "$log_prefix PASS: all gates green"
   return 0
+}
+
+# Pure decision for gate 5. Takes the GraphQL pullRequest response JSON, a
+# comma-separated list of reviewer login slugs, and (optionally) a reviewer
+# check-run name; echoes "PASS" or "FAIL: <reason>". Kept side-effect-free so it
+# can be unit-tested with fixtures (see tests/test_yolo_gate.bats). Login
+# matching is case-insensitive and strips a trailing "[bot]" on both the config
+# value and the GraphQL author login, because GraphQL reports bot actors without
+# the "[bot]" suffix.
+_yolo_gate_reviewed() {
+  local json="$1" logins_csv="$2" check_name="$3"
+  local pr_json
+  pr_json=$(echo "$json" | jq -c '.data.repository.pullRequest' 2>/dev/null || echo "")
+  if [ -z "$pr_json" ] || [ "$pr_json" = "null" ]; then
+    echo "FAIL: could not read PR review data"
+    return 0
+  fi
+
+  local head
+  head=$(echo "$pr_json" | jq -r '.headRefOid // ""' 2>/dev/null || echo "")
+  if [ -z "$head" ]; then
+    echo "FAIL: could not determine head commit"
+    return 0
+  fi
+
+  # Did a configured reviewer evaluate the current head? Accept proof from any of:
+  #   a) a formal review whose commit == head,
+  #   b) an inline review-thread comment whose commit == head (some reviewers post
+  #      inline comments without a wrapping review event),
+  #   c) a successful reviewer check run (by name) on the head commit -- this is how
+  #      a CI-based reviewer (e.g. the Claude review GitHub Action) proves it
+  #      evaluated the head even on a clean pass that leaves no comment.
+  # Everything is anchored to the head SHA, so stale reviews, outdated comments,
+  # and checks from an earlier commit never count.
+  local login_hits
+  login_hits=$(echo "$pr_json" | jq -r --arg logins "$logins_csv" --arg head "$head" '
+    def norm: ascii_downcase | gsub("\\[bot\\]$"; "");
+    ($logins | ascii_downcase | split(",") | map(gsub("\\[bot\\]$"; ""))) as $want
+    | [ ((.reviews.nodes // [])[] | select((.commit.oid // "") == $head) | (.author.login // "" | norm)),
+        ((.reviewThreads.nodes // [])[] | (.comments.nodes // [])[] | select((.commit.oid // "") == $head) | (.author.login // "" | norm)) ]
+    | map(select(. as $l | $want | index($l) != null))
+    | length' 2>/dev/null || echo "0")
+
+  local check_hits=0
+  if [ -n "$check_name" ]; then
+    check_hits=$(echo "$pr_json" | jq -r --arg cn "$check_name" '
+      [ ((.commits.nodes // [])[0].commit.checkSuites.nodes // [])[]
+        | (.checkRuns.nodes // [])[]
+        | select((.name // "" | ascii_downcase) == ($cn | ascii_downcase))
+        | select((.conclusion // "" | ascii_upcase) == "SUCCESS") ]
+      | length' 2>/dev/null || echo "0")
+  fi
+
+  if [ "$(( ${login_hits:-0} + ${check_hits:-0} ))" -eq 0 ]; then
+    echo "FAIL: no configured reviewer has evaluated current head ${head:0:8}"
+    return 0
+  fi
+
+  local unresolved
+  unresolved=$(echo "$pr_json" | jq '[(.reviewThreads.nodes // [])[] | select(.isResolved == false)] | length' 2>/dev/null || echo "0")
+  if [ "${unresolved:-0}" -gt 0 ]; then
+    echo "FAIL: $unresolved unresolved review thread(s)"
+    return 0
+  fi
+
+  echo "PASS"
+  return 0
+}
+
+# Resolve a project/repo "yolo_reviewer" config value into a reviewer login CSV.
+# Empty/absent -> the default reviewer logins. The literal false (JSON) ->
+# "__DISABLED__" (skip gate 5). Otherwise use the object's .logins array.
+_resolve_yolo_reviewer() {
+  local raw="$1"
+  if [ -z "$raw" ] || [ "$raw" = "null" ]; then
+    echo "$DEFAULT_YOLO_REVIEWER_LOGINS"
+    return 0
+  fi
+  if [ "$raw" = "false" ]; then
+    echo "__DISABLED__"
+    return 0
+  fi
+  local logins
+  logins=$(echo "$raw" | jq -r '(.logins // []) | join(",")' 2>/dev/null || echo "")
+  if [ -z "$logins" ]; then
+    echo "$DEFAULT_YOLO_REVIEWER_LOGINS"
+  else
+    echo "$logins"
+  fi
+}
+
+# Resolve the optional "yolo_reviewer.check" value: the name of a CI check run
+# that, when successful on the head commit, proves a CI-based reviewer (e.g. the
+# Claude review Action) evaluated the head. Empty when unset or gate disabled.
+_resolve_yolo_reviewer_check() {
+  local raw="$1"
+  if [ -z "$raw" ] || [ "$raw" = "null" ] || [ "$raw" = "false" ]; then
+    echo ""
+    return 0
+  fi
+  echo "$raw" | jq -r '.check // ""' 2>/dev/null || echo ""
 }
 
 _render_plist() {
@@ -282,6 +385,7 @@ cmd_run() {
     project_prefix=$(echo "$project" | jq -r '.branch_prefix // empty')
     project_target_branch=$(echo "$project" | jq -r '.target_branch // empty')
     yolo=$(echo "$project" | jq -r '.yolo // false')
+    project_reviewer=$(echo "$project" | jq -c '.yolo_reviewer // empty')
     paused=$(echo "$project" | jq -r '.paused')
 
     # Skip paused projects
@@ -306,8 +410,13 @@ cmd_run() {
       repo=$(echo "$repo_entry" | jq -r '.repo')
       repo_prefix=$(echo "$repo_entry" | jq -r '.branch_prefix // empty')
       repo_target_branch=$(echo "$repo_entry" | jq -r '.target_branch // empty')
+      repo_reviewer=$(echo "$repo_entry" | jq -c '.yolo_reviewer // empty')
       # Resolve branch prefix: per-repo > project-level > default
       local branch_prefix="${repo_prefix:-${project_prefix:-$DEFAULT_BRANCH_PREFIX}}"
+      # Resolve reviewer config: per-repo > project-level > default (Copilot)
+      local reviewer_logins reviewer_check
+      reviewer_logins=$(_resolve_yolo_reviewer "${repo_reviewer:-$project_reviewer}")
+      reviewer_check=$(_resolve_yolo_reviewer_check "${repo_reviewer:-$project_reviewer}")
       # Resolve target branch: per-repo > project-level > none (default = any base)
       local target_branch="${repo_target_branch:-${project_target_branch:-}}"
       local search_filter="head:$branch_prefix"
@@ -326,7 +435,7 @@ cmd_run() {
         # picks up the merged PR via the existing DISPATCH path.
         if [ "$yolo" = "true" ]; then
           local yolo_pr_key="${repo}#${open_pr_num}"
-          if _yolo_check_pr "$repo" "$open_pr_num" "$name"; then
+          if _yolo_check_pr "$repo" "$open_pr_num" "$name" "$reviewer_logins" "$reviewer_check"; then
             local prev_yolo_pr prev_yolo_at prev_yolo_count
             prev_yolo_pr=$(state_get "$name" "last_yolo_attempt_for_pr")
             prev_yolo_at=$(state_get "$name" "last_yolo_attempt_at")
