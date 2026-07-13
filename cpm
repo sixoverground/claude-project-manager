@@ -872,6 +872,79 @@ _append_project_to_registry() {
   echo "$project_json"
 }
 
+# Update fields on an existing project. Each field arg is either the KEEP
+# sentinel "__CPM_KEEP__" (leave unchanged) or a new value. For branch_prefix
+# and target_branch, an empty string removes the key (reverting to the default).
+# repos_json is either the KEEP sentinel or a JSON array of {repo:...} objects.
+# Echoes the updated project JSON on success.
+_update_project_in_registry() {
+  local name="$1" new_name="$2" trigger_id="$3" branch_prefix="$4" target_branch="$5" yolo="$6" repos_json="$7"
+  local KEEP="__CPM_KEEP__"
+
+  if [ -z "$name" ]; then
+    echo "Error: name is required" >&2
+    return 1
+  fi
+  if [ ! -f "$PROJECTS_FILE" ] || ! jq -e --arg n "$name" '.projects[] | select(.name == $n)' "$PROJECTS_FILE" >/dev/null 2>&1; then
+    echo "Error: project '$name' not found" >&2
+    return 1
+  fi
+
+  # A rename must target a non-empty, currently-unused name.
+  if [ "$new_name" != "$KEEP" ] && [ "$new_name" != "$name" ]; then
+    if [ -z "$new_name" ]; then
+      echo "Error: new name cannot be empty" >&2
+      return 1
+    fi
+    if jq -e --arg n "$new_name" '.projects[] | select(.name == $n)' "$PROJECTS_FILE" >/dev/null 2>&1; then
+      echo "Error: project '$new_name' already exists" >&2
+      return 1
+    fi
+  fi
+
+  # trigger_id is required; refuse to blank it out.
+  if [ "$trigger_id" != "$KEEP" ] && [ -z "$trigger_id" ]; then
+    echo "Error: trigger_id cannot be empty" >&2
+    return 1
+  fi
+
+  # A repo replacement must leave at least one repo.
+  if [ "$repos_json" != "$KEEP" ]; then
+    local repo_count
+    repo_count=$(echo "$repos_json" | jq 'length' 2>/dev/null || echo "0")
+    if [ "$repo_count" -eq 0 ]; then
+      echo "Error: at least one repo is required" >&2
+      return 1
+    fi
+  fi
+
+  local tmp="$PROJECTS_FILE.tmp"
+  jq \
+    --arg n "$name" \
+    --arg keep "$KEEP" \
+    --arg new_name "$new_name" \
+    --arg trigger "$trigger_id" \
+    --arg prefix "$branch_prefix" \
+    --arg base "$target_branch" \
+    --arg yolo "$yolo" \
+    --arg repos "$repos_json" \
+    '.projects |= map(
+      if .name == $n then
+          (if $new_name == $keep then . else .name = $new_name end)
+        | (if $trigger  == $keep then . else .trigger_id = $trigger end)
+        | (if $prefix   == $keep then . elif $prefix == "" then del(.branch_prefix) else .branch_prefix = $prefix end)
+        | (if $base     == $keep then . elif $base == "" then del(.target_branch) else .target_branch = $base end)
+        | (if $yolo     == $keep then . else .yolo = ($yolo == "true") end)
+        | (if $repos    == $keep then . else .repos = ($repos | fromjson) end)
+      else . end
+    )' \
+    "$PROJECTS_FILE" > "$tmp" && mv "$tmp" "$PROJECTS_FILE"
+
+  local final_name="$name"
+  [ "$new_name" != "$KEEP" ] && final_name="$new_name"
+  jq -c --arg n "$final_name" '.projects[] | select(.name == $n)' "$PROJECTS_FILE"
+}
+
 # --- Subcommand: add ---
 cmd_add() {
   shift  # remove "add" from args
@@ -928,6 +1001,83 @@ cmd_add() {
   if [[ -z "$kickoff" || "$kickoff" =~ ^[Yy] ]]; then
     _dispatch_routine "$name" "$trigger_id"
   fi
+}
+
+# --- Subcommand: update ---
+cmd_update() {
+  shift  # remove "update" from args
+
+  local usage="Usage: cpm update <name> [--rename <new>] [--trigger <id>] [--prefix <branch_prefix>] [--base <target_branch>] [--repo <owner/repo>]... [--yolo on|off]
+  Pass --prefix '' or --base '' to clear the field (revert to default)."
+
+  local name=""
+  # First non-flag argument is the project to update.
+  if [[ $# -gt 0 && "$1" != --* ]]; then
+    name="$1"; shift
+  fi
+
+  local KEEP="__CPM_KEEP__"
+  local new_name="$KEEP" trigger_id="$KEEP" branch_prefix="$KEEP" target_branch="$KEEP" yolo="$KEEP"
+  local -a repos=()
+  local repos_set=false
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --name)     name="$2"; shift 2 ;;
+      --rename)   new_name="$2"; shift 2 ;;
+      --trigger)  trigger_id="$2"; shift 2 ;;
+      --prefix)   branch_prefix="$2"; shift 2 ;;
+      --base)     target_branch="$2"; shift 2 ;;
+      --repo)     repos+=("$2"); repos_set=true; shift 2 ;;
+      --yolo)     yolo="$2"; shift 2 ;;
+      *)
+        echo "Unknown option: $1"
+        echo "$usage"
+        exit 1
+        ;;
+    esac
+  done
+
+  if [ -z "$name" ]; then
+    echo "$usage"
+    exit 1
+  fi
+
+  # Nothing to do?
+  if [ "$new_name" = "$KEEP" ] && [ "$trigger_id" = "$KEEP" ] && [ "$branch_prefix" = "$KEEP" ] \
+     && [ "$target_branch" = "$KEEP" ] && [ "$yolo" = "$KEEP" ] && [ "$repos_set" = "false" ]; then
+    echo "Nothing to update. $usage"
+    exit 1
+  fi
+
+  # Normalize --yolo on|off to the stored boolean.
+  if [ "$yolo" != "$KEEP" ]; then
+    case "$yolo" in
+      on|true)   yolo="true" ;;
+      off|false) yolo="false" ;;
+      *) echo "Error: --yolo must be 'on' or 'off'"; exit 1 ;;
+    esac
+  fi
+
+  # Build the repos JSON array (or the KEEP sentinel to leave repos untouched).
+  local repos_arg="$KEEP"
+  if [ "$repos_set" = "true" ]; then
+    repos_arg="["
+    local first=true
+    for r in "${repos[@]}"; do
+      [ "$first" = "true" ] && first=false || repos_arg+=","
+      repos_arg+="{\"repo\":\"$r\"}"
+    done
+    repos_arg+="]"
+  fi
+
+  local result
+  result=$(_update_project_in_registry "$name" "$new_name" "$trigger_id" "$branch_prefix" "$target_branch" "$yolo" "$repos_arg") || exit 1
+
+  local shown_name="$name"
+  [ "$new_name" != "$KEEP" ] && shown_name="$new_name"
+  echo "Updated project: $shown_name"
+  echo "$result" | jq .
 }
 
 # --- Subcommand: new ---
@@ -1081,6 +1231,7 @@ case "${1:-help}" in
   stop)   cmd_stop ;;
   logs)   cmd_logs ;;
   add)    cmd_add "$@" ;;
+  update) cmd_update "$@" ;;
   remove) cmd_remove "$@" ;;
   pause)  cmd_pause "$@" ;;
   resume) cmd_resume "$@" ;;
@@ -1101,6 +1252,7 @@ case "${1:-help}" in
     echo "  logs     Tail recent cpm logs"
     echo "  new      Copy the new-project setup prompt to the clipboard"
     echo "  add      Add a project to the registry (flag-based or interactive)"
+    echo "  update   Change fields on an existing project (prefix, base, trigger, repos, name)"
     echo "  remove   Remove a project from the registry"
     echo "  pause    Pause a project (skip during cpm runs)"
     echo "  resume   Resume a paused project"
@@ -1109,6 +1261,10 @@ case "${1:-help}" in
     echo ""
     echo "Add usage:"
     echo "  cpm add --name <name> --repo <owner/repo> [--repo <owner/repo>] --trigger <trigger_id> [--prefix <branch_prefix>] [--base <target_branch>] [--yolo]"
+    echo ""
+    echo "Update usage:"
+    echo "  cpm update <name> [--rename <new>] [--trigger <id>] [--prefix <branch_prefix>] [--base <target_branch>] [--repo <owner/repo>]... [--yolo on|off]"
+    echo "  (pass --prefix '' or --base '' to clear a field and revert to the default)"
     echo ""
     ;;
   *)

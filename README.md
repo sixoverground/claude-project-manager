@@ -150,6 +150,7 @@ If you closed your terminal mid-setup, you can recover by running `cpm add` with
 | `cpm doctor`         | Verify deps, auth, projects.json, plist, scheduler state. |
 | `cpm new`            | Copy the new-project setup prompt to the clipboard. |
 | `cpm add ...`        | Register a project (flag-based, or interactive when called with no flags). |
+| `cpm update <name> ...` | Change fields on an existing project (prefix, base, trigger, repos, name). |
 | `cpm remove <name>`  | Delete a project from the registry. |
 | `cpm pause <name>`   | Skip this project during runs. |
 | `cpm resume <name>`  | Un-pause. |
@@ -193,6 +194,26 @@ Each project entry defines the repos to monitor and the routine to dispatch.
 | `paused`        | No  | `true` to skip this project. Default: `false`. |
 
 Each repo entry can override `branch_prefix` or `target_branch` if repos within a project use different conventions.
+
+### Editing a project
+
+`cpm update <name>` changes fields on an existing project in place. Only the flags you pass are touched; everything else is left alone.
+
+```bash
+# Point a project at a new base branch and branch prefix
+cpm update artsbridge --prefix cpm/tasks/ --base feature/tasks
+
+# Swap the routine's trigger, rename it, or replace its repos
+cpm update artsbridge --trigger trig_01NEW...
+cpm update artsbridge --rename artsbridge-v2
+cpm update artsbridge --repo ArtsBridgeLLC/artsbridge --repo ArtsBridgeLLC/api
+
+# Clear an optional field (reverts to the default) by passing an empty value
+cpm update artsbridge --base ''      # stop filtering PRs by base branch
+cpm update artsbridge --prefix ''    # fall back to the claude/ default
+```
+
+Flags: `--rename <new>`, `--trigger <id>`, `--prefix <branch_prefix>`, `--base <target_branch>`, `--repo <owner/repo>` (repeatable; replaces the repo list), and `--yolo on|off`. Pausing is still handled by `cpm pause`/`cpm resume`, and YOLO by `cpm yolo` (or `--yolo` here).
 
 ### Multi-repo projects
 
